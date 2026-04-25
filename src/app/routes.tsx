@@ -94,4 +94,4 @@ export const router = createBrowserRouter([
       { path: "dashboard", Component: PostRunDashboard },
     ],
   },
-]);
+], { basename: import.meta.env.PROD ? '/echorun/' : '/' });
