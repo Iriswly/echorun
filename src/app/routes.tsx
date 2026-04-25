@@ -17,17 +17,8 @@ function Root() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{ background: "linear-gradient(135deg, #0a0b02 0%, #050601 100%)" }}
+      style={{ background: "#F0F2F5" }}
     >
-      {/* Scanline overlay */}
-      <div
-        className="fixed inset-0 pointer-events-none z-50"
-        style={{
-          background:
-            "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px)",
-        }}
-      />
-
       {/* Mobile phone frame */}
       <div
         className="relative w-full overflow-hidden flex flex-col"
@@ -35,19 +26,11 @@ function Root() {
           maxWidth: "390px",
           height: "100dvh",
           maxHeight: "844px",
-          background: "#0d0e02",
-          boxShadow: "0 0 60px rgba(24,172,183,0.12), 0 0 120px rgba(0,0,0,0.8)",
+          background: "#F7F8FA",
+          boxShadow: "0 8px 40px rgba(15,23,42,0.12)",
           fontFamily: "'Archivo', sans-serif",
         }}
       >
-        {/* Noise texture overlay */}
-        <div
-          className="absolute inset-0 pointer-events-none z-40"
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E")`,
-            opacity: 0.4,
-          }}
-        />
 
         {/* Content area */}
         <div className="flex-1 overflow-hidden">
@@ -58,9 +41,8 @@ function Root() {
         <div
           className="relative z-50 flex"
           style={{
-            background: "rgba(10,11,2,0.95)",
-            borderTop: "1px solid rgba(24,172,183,0.2)",
-            backdropFilter: "blur(20px)",
+            background: "#FFFFFF",
+            borderTop: "1px solid #E5E7EB",
           }}
         >
           {tabs.map((tab) => {
@@ -72,33 +54,25 @@ function Root() {
                 onClick={() => navigate(tab.path)}
                 className="relative flex-1 flex flex-col items-center gap-1 py-3 transition-all duration-200 active:scale-95"
                 style={{
-                  color: isActive ? "#18ACB7" : "#4a4f1a",
+                  color: isActive ? "#2563EB" : "#9CA3AF",
                 }}
               >
-                <Icon
-                  size={22}
-                  style={{
-                    filter: isActive ? "drop-shadow(0 0 8px #18ACB7)" : "none",
-                  }}
-                />
+                <Icon size={22} />
                 <span
                   className="uppercase tracking-widest"
                   style={{
                     fontSize: "9px",
-                    fontWeight: 800,
+                    fontWeight: 700,
                     fontFamily: "'Archivo', sans-serif",
-                    letterSpacing: "0.15em",
+                    letterSpacing: "0.12em",
                   }}
                 >
                   {tab.label}
                 </span>
                 {isActive && (
                   <div
-                    className="absolute top-0 h-0.5 w-16 rounded-full"
-                    style={{
-                      background: "linear-gradient(90deg, transparent, #18ACB7, transparent)",
-                      boxShadow: "0 0 8px #18ACB7",
-                    }}
+                    className="absolute top-0 h-0.5 w-12 rounded-full"
+                    style={{ background: "#2563EB" }}
                   />
                 )}
               </button>

@@ -1,72 +1,75 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Play, Pause, ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { Play, Pause, ChevronLeft, ChevronRight, Check, Trophy, Star } from "lucide-react";
 import { useNavigate } from "react-router";
+import { getProfile } from "../../utils/profile.js";
+import { getLevelInfo } from "../../utils/scoring.js";
+import { ALL_BADGES } from "../../utils/badges.js";
 
 const coaches = [
   {
     id: 1,
-    name: "THE SNARKY COACH",
+    name: "The Snarky Coach",
     alias: "DREDD",
-    style: "NO EXCUSES",
-    vibe: "STOP BEING SLOW",
+    style: "No Excuses",
+    vibe: "Push Harder",
     description: "Brutally honest. Zero sympathy. Gets results.",
-    color: "#F2403B",
-    secondaryColor: "#7a0c09",
-    glowColor: "rgba(242,64,59,0.4)",
-    gradient: "linear-gradient(160deg, #3d0a09 0%, #1a0404 60%, #0d0e02 100%)",
-    borderColor: "rgba(242,64,59,0.5)",
+    color: "#EF4444",
+    secondaryColor: "#b91c1c",
+    glowColor: "rgba(239,68,68,0.2)",
+    gradient: "linear-gradient(160deg, #fff5f5 0%, #F7F8FA 100%)",
+    borderColor: "#FCA5A5",
     sample: "You call that a sprint? My grandmother moves faster.",
     avatar: "https://images.unsplash.com/photo-1767066990216-72b1f7c0b320?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400",
-    emoji: "😈",
+    emoji: "😤",
   },
   {
     id: 2,
-    name: "ZEN MASTER",
+    name: "Zen Master",
     alias: "KIRA",
-    style: "FLOW STATE",
-    vibe: "BREATHE & CONQUER",
+    style: "Flow State",
+    vibe: "Breathe & Conquer",
     description: "Ancient wisdom meets modern performance.",
-    color: "#18ACB7",
-    secondaryColor: "#0a5c63",
-    glowColor: "rgba(24,172,183,0.4)",
-    gradient: "linear-gradient(160deg, #061c1f 0%, #041213 60%, #0d0e02 100%)",
-    borderColor: "rgba(24,172,183,0.5)",
+    color: "#14B8A6",
+    secondaryColor: "#0f766e",
+    glowColor: "rgba(20,184,166,0.2)",
+    gradient: "linear-gradient(160deg, #f0fdfa 0%, #F7F8FA 100%)",
+    borderColor: "#99F6E4",
     sample: "Your breath is the metronome. Let your legs follow.",
     avatar: "https://images.unsplash.com/photo-1616072775440-ca2ea7c7ce13?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400",
     emoji: "🧘",
   },
   {
     id: 3,
-    name: "BEAST MODE",
+    name: "Beast Mode",
     alias: "TITAN",
-    style: "FULL THROTTLE",
-    vibe: "PAIN IS TEMPORARY",
-    description: "Unleash the monster within. No limits.",
-    color: "#FFCD00",
-    secondaryColor: "#7a6000",
-    glowColor: "rgba(255,205,0,0.4)",
-    gradient: "linear-gradient(160deg, #2a1f00 0%, #181200 60%, #0d0e02 100%)",
-    borderColor: "rgba(255,205,0,0.5)",
-    sample: "Every step is a battle. WIN. EVERY. SINGLE. ONE.",
+    style: "Full Throttle",
+    vibe: "Pain Is Temporary",
+    description: "Unleash your potential. No limits.",
+    color: "#F97316",
+    secondaryColor: "#c2410c",
+    glowColor: "rgba(249,115,22,0.2)",
+    gradient: "linear-gradient(160deg, #fff7ed 0%, #F7F8FA 100%)",
+    borderColor: "#FDBA74",
+    sample: "Every step is a battle. Win every single one.",
     avatar: "https://images.unsplash.com/photo-1555577773-ac8657852524?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400",
     emoji: "⚡",
   },
   {
     id: 4,
-    name: "PHANTOM PACER",
+    name: "Phantom Pacer",
     alias: "SPECTER",
-    style: "DATA DRIVEN",
-    vibe: "GHOST YOUR LIMITS",
-    description: "Pure analytics. Optimal pacing. Ghost economy.",
-    color: "#a855f7",
-    secondaryColor: "#4c1d80",
-    glowColor: "rgba(168,85,247,0.4)",
-    gradient: "linear-gradient(160deg, #1a0a2e 0%, #0f0619 60%, #0d0e02 100%)",
-    borderColor: "rgba(168,85,247,0.5)",
+    style: "Data Driven",
+    vibe: "Beat Your Pace",
+    description: "Pure analytics. Optimal pacing. Smart economy.",
+    color: "#7C3AED",
+    secondaryColor: "#5b21b6",
+    glowColor: "rgba(124,58,237,0.2)",
+    gradient: "linear-gradient(160deg, #f5f3ff 0%, #F7F8FA 100%)",
+    borderColor: "#C4B5FD",
     sample: "At 2.4km, increase cadence by 4%. Your data demands it.",
     avatar: "https://images.unsplash.com/photo-1568843287278-8a8a33055de8?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400",
-    emoji: "👻",
+    emoji: "📊",
   },
 ];
 
@@ -89,12 +92,7 @@ function WaveformBars({ isPlaying, color }: { isPlaying: boolean; color: string 
           animate={{ height: isPlaying ? h : [4, 8, 12, 7, 5, 10, 8, 4][i % 8] }}
           transition={{ duration: 0.1 }}
           className="rounded-full"
-          style={{
-            width: "2.5px",
-            minHeight: "3px",
-            backgroundColor: color,
-            height: `${h}px`,
-          }}
+          style={{ width: "2.5px", minHeight: "3px", backgroundColor: color, height: `${h}px` }}
         />
       ))}
     </div>
@@ -105,8 +103,13 @@ export function CoachSelection() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [playingId, setPlayingId] = useState<number | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    setProfile(getProfile());
+  }, []);
 
   const scrollToCard = useCallback((index: number) => {
     if (!scrollRef.current) return;
@@ -124,21 +127,16 @@ export function CoachSelection() {
   const handleScroll = () => {
     if (!scrollRef.current) return;
     const cardWidth = 280 + 16;
-    const containerWidth = scrollRef.current.offsetWidth;
     const scrollLeft = scrollRef.current.scrollLeft;
-    const index = Math.round((scrollLeft + (containerWidth - 280) / 2) / cardWidth - (containerWidth - 280) / 2 / cardWidth);
     const clampedIndex = Math.max(0, Math.min(coaches.length - 1, Math.round(scrollLeft / cardWidth)));
     setSelectedIdx(clampedIndex);
   };
 
   const selectedCoach = coaches[selectedIdx];
+  const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
 
   return (
-    <div
-      className="relative flex flex-col h-full overflow-hidden"
-      style={{ background: "#0d0e02" }}
-    >
-      {/* Background gradient that shifts per coach */}
+    <div className="relative flex flex-col h-full overflow-hidden" style={{ background: "#F7F8FA" }}>
       <motion.div
         key={selectedCoach.id}
         initial={{ opacity: 0 }}
@@ -149,50 +147,57 @@ export function CoachSelection() {
       />
 
       {/* Header */}
-      <div className="relative z-10 px-6 pt-12 pb-4">
-        <div className="flex items-center justify-between mb-1">
-          <span
-            style={{
-              fontSize: "10px",
-              letterSpacing: "0.3em",
-              color: selectedCoach.color,
-              fontWeight: 800,
-              fontFamily: "'Archivo', sans-serif",
-              filter: `drop-shadow(0 0 6px ${selectedCoach.color})`,
-            }}
-          >
-            ECHORUN //
+      <div className="relative z-10 px-6 pt-12 pb-3">
+        <div className="flex items-center justify-between mb-2">
+          <span style={{ fontSize: "11px", letterSpacing: "0.2em", color: selectedCoach.color, fontWeight: 700, fontFamily: "'Archivo', sans-serif" }}>
+            ECHORUN
           </span>
-          <div
-            className="px-2 py-0.5 rounded-sm"
-            style={{
-              background: "rgba(24,172,183,0.1)",
-              border: "1px solid rgba(24,172,183,0.3)",
-              fontSize: "9px",
-              color: "#18ACB7",
-              fontWeight: 800,
-              letterSpacing: "0.15em",
-            }}
-          >
+          <div className="px-2 py-0.5 rounded-full" style={{ background: `${selectedCoach.color}18`, border: `1px solid ${selectedCoach.borderColor}`, fontSize: "9px", color: selectedCoach.color, fontWeight: 700, letterSpacing: "0.1em" }}>
             AI COACH
           </div>
         </div>
-        <h1
-          style={{
-            fontSize: "28px",
-            fontWeight: 900,
-            color: "#e8e8d0",
-            letterSpacing: "-0.02em",
-            lineHeight: 1.1,
-            fontFamily: "'Archivo Black', sans-serif",
-          }}
-        >
-          CHOOSE YOUR
-          <br />
-          <span style={{ color: selectedCoach.color, filter: `drop-shadow(0 0 10px ${selectedCoach.color})` }}>
-            COACH
-          </span>
+        <h1 style={{ fontSize: "26px", fontWeight: 800, color: "#111827", letterSpacing: "-0.02em", lineHeight: 1.15, fontFamily: "'Archivo Black', sans-serif" }}>
+          Choose Your<br />
+          <span style={{ color: selectedCoach.color }}>Running Coach</span>
         </h1>
+        <p style={{ fontSize: "13px", color: "#6B7280", marginTop: "4px" }}>Select a voice style for your run.</p>
+
+        {/* Profile summary strip */}
+        {profile && levelInfo && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="flex items-center gap-2 mt-3 p-2.5 rounded-xl"
+            style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 1px 4px rgba(15,23,42,0.06)" }}
+          >
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: `${selectedCoach.color}12`, border: `1px solid ${selectedCoach.borderColor}` }}>
+              <Trophy size={10} color={selectedCoach.color} />
+              <span style={{ fontSize: "11px", fontWeight: 800, color: selectedCoach.color, fontFamily: "'Archivo Black', sans-serif" }}>
+                LVL {levelInfo.level}
+              </span>
+            </div>
+            <div style={{ fontSize: "11px", color: "#6B7280", fontWeight: 600 }}>
+              {profile.totalPoints} XP
+            </div>
+            <div className="flex items-center gap-1">
+              <Star size={9} fill="#F59E0B" color="#F59E0B" />
+              <span style={{ fontSize: "11px", color: "#6B7280", fontWeight: 600 }}>
+                {profile.badges.length} badge{profile.badges.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <div className="flex-1" />
+            {/* XP progress bar */}
+            <div className="flex items-center gap-1.5">
+              <div className="rounded-full overflow-hidden" style={{ width: "48px", height: "4px", background: "#E5E7EB" }}>
+                <div className="h-full rounded-full" style={{ width: `${levelInfo.progress * 100}%`, background: selectedCoach.color, transition: "width 0.6s ease" }} />
+              </div>
+              <span style={{ fontSize: "9px", color: "#9CA3AF", fontWeight: 600 }}>
+                {levelInfo.currentLevelPoints}/{levelInfo.nextLevelPoints}
+              </span>
+            </div>
+          </motion.div>
+        )}
       </div>
 
       {/* Carousel */}
@@ -201,13 +206,7 @@ export function CoachSelection() {
           ref={scrollRef}
           onScroll={handleScroll}
           className="flex gap-4 overflow-x-auto pb-4"
-          style={{
-            scrollSnapType: "x mandatory",
-            scrollbarWidth: "none",
-            msOverflowStyle: "none",
-            paddingLeft: "55px",
-            paddingRight: "55px",
-          }}
+          style={{ scrollSnapType: "x mandatory", scrollbarWidth: "none", msOverflowStyle: "none", paddingLeft: "55px", paddingRight: "55px" }}
         >
           {coaches.map((coach, idx) => {
             const isActive = idx === selectedIdx;
@@ -216,162 +215,51 @@ export function CoachSelection() {
             return (
               <motion.div
                 key={coach.id}
-                onClick={() => {
-                  setSelectedIdx(idx);
-                  scrollToCard(idx);
-                }}
-                animate={{
-                  scale: isActive ? 1 : 0.9,
-                  opacity: isActive ? 1 : 0.6,
-                }}
+                onClick={() => { setSelectedIdx(idx); scrollToCard(idx); }}
+                animate={{ scale: isActive ? 1 : 0.9, opacity: isActive ? 1 : 0.65 }}
                 transition={{ duration: 0.3 }}
                 className="relative flex-shrink-0 rounded-2xl overflow-hidden cursor-pointer"
-                style={{
-                  width: "280px",
-                  scrollSnapAlign: "center",
-                  background: "rgba(13,14,2,0.6)",
-                  backdropFilter: "blur(20px)",
-                  border: `1.5px solid ${isActive ? coach.borderColor : "rgba(255,255,255,0.06)"}`,
-                  boxShadow: isActive
-                    ? `0 0 30px ${coach.glowColor}, inset 0 0 40px rgba(0,0,0,0.4)`
-                    : "0 4px 20px rgba(0,0,0,0.4)",
-                }}
+                style={{ width: "280px", scrollSnapAlign: "center", background: "#FFFFFF", border: `1.5px solid ${isActive ? coach.borderColor : "#E5E7EB"}`, boxShadow: isActive ? "0 8px 24px rgba(15,23,42,0.10)" : "0 2px 8px rgba(15,23,42,0.06)" }}
               >
-                {/* Avatar image */}
                 <div className="relative h-52 overflow-hidden">
-                  <img
-                    src={coach.avatar}
-                    alt={coach.name}
-                    className="w-full h-full object-cover"
-                    style={{ filter: `saturate(0.3) hue-rotate(${idx * 20}deg)` }}
-                  />
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      background: `linear-gradient(to bottom, transparent 40%, ${coach.gradient.split("(")[1].split(",")[0]} 100%)`,
-                    }}
-                  />
-                  {/* Coach emoji overlay */}
-                  <div
-                    className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center text-xl"
-                    style={{
-                      background: `rgba(13,14,2,0.7)`,
-                      border: `1px solid ${coach.borderColor}`,
-                      backdropFilter: "blur(10px)",
-                    }}
-                  >
+                  <img src={coach.avatar} alt={coach.name} className="w-full h-full object-cover" style={{ filter: "saturate(0.75) brightness(1.05)" }} />
+                  <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 40%, rgba(255,255,255,0.95) 100%)" }} />
+                  <div className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center text-xl" style={{ background: "rgba(255,255,255,0.9)", border: `1px solid ${coach.borderColor}` }}>
                     {coach.emoji}
                   </div>
-
-                  {/* Selection indicator */}
                   {isActive && (
-                    <div
-                      className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center"
-                      style={{
-                        background: coach.color,
-                        boxShadow: `0 0 12px ${coach.color}`,
-                      }}
-                    >
+                    <div className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: coach.color, boxShadow: `0 0 12px ${coach.color}` }}>
                       <Check size={14} color="#000" strokeWidth={3} />
                     </div>
                   )}
                 </div>
 
-                {/* Card body */}
                 <div className="p-4">
-                  {/* Name */}
-                  <div
-                    style={{
-                      fontSize: "8px",
-                      letterSpacing: "0.25em",
-                      color: coach.color,
-                      fontWeight: 800,
-                      marginBottom: "2px",
-                      filter: `drop-shadow(0 0 4px ${coach.color})`,
-                    }}
-                  >
-                    {coach.alias}
-                  </div>
-                  <h3
-                    style={{
-                      fontSize: "18px",
-                      fontWeight: 900,
-                      color: "#e8e8d0",
-                      letterSpacing: "-0.01em",
-                      lineHeight: 1,
-                      fontFamily: "'Archivo Black', sans-serif",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    {coach.name}
-                  </h3>
-                  <p
-                    style={{
-                      fontSize: "11px",
-                      color: "#6a6b50",
-                      marginBottom: "12px",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {coach.description}
-                  </p>
+                  <div style={{ fontSize: "9px", letterSpacing: "0.2em", color: coach.color, fontWeight: 700, marginBottom: "2px" }}>{coach.alias}</div>
+                  <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#111827", letterSpacing: "-0.01em", lineHeight: 1, fontFamily: "'Archivo Black', sans-serif", marginBottom: "6px" }}>{coach.name}</h3>
+                  <p style={{ fontSize: "12px", color: "#6B7280", marginBottom: "12px", lineHeight: 1.4 }}>{coach.description}</p>
 
-                  {/* Tags */}
                   <div className="flex gap-2 mb-3">
-                    <div
-                      className="flex items-center gap-1 px-2 py-1 rounded-sm"
-                      style={{
-                        background: `${coach.color}18`,
-                        border: `1px solid ${coach.color}40`,
-                      }}
-                    >
-                      <span style={{ fontSize: "8px", color: "#6a6b50", fontWeight: 700, letterSpacing: "0.1em" }}>STYLE</span>
-                      <span style={{ fontSize: "10px", color: coach.color, fontWeight: 800, letterSpacing: "0.05em" }}>{coach.style}</span>
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ background: `${coach.color}12`, border: `1px solid ${coach.borderColor}` }}>
+                      <span style={{ fontSize: "8px", color: "#9CA3AF", fontWeight: 600, letterSpacing: "0.08em" }}>STYLE</span>
+                      <span style={{ fontSize: "10px", color: coach.color, fontWeight: 700 }}>{coach.style}</span>
                     </div>
-                    <div
-                      className="flex items-center gap-1 px-2 py-1 rounded-sm"
-                      style={{
-                        background: "rgba(255,255,255,0.04)",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                      }}
-                    >
-                      <span style={{ fontSize: "8px", color: "#6a6b50", fontWeight: 700, letterSpacing: "0.1em" }}>VIBE</span>
-                      <span style={{ fontSize: "10px", color: "#e8e8d0", fontWeight: 800, letterSpacing: "0.02em" }}>{coach.vibe}</span>
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ background: "#F3F4F6", border: "1px solid #E5E7EB" }}>
+                      <span style={{ fontSize: "8px", color: "#9CA3AF", fontWeight: 600, letterSpacing: "0.08em" }}>VIBE</span>
+                      <span style={{ fontSize: "10px", color: "#374151", fontWeight: 700 }}>{coach.vibe}</span>
                     </div>
                   </div>
 
-                  {/* Sample quote */}
-                  <div
-                    className="p-3 rounded-lg mb-3"
-                    style={{
-                      background: "rgba(0,0,0,0.3)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                      fontSize: "11px",
-                      color: "#8a8b6a",
-                      fontStyle: "italic",
-                      lineHeight: 1.4,
-                    }}
-                  >
+                  <div className="p-3 rounded-xl mb-3" style={{ background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: "11px", color: "#6B7280", fontStyle: "italic", lineHeight: 1.5 }}>
                     "{coach.sample}"
                   </div>
 
-                  {/* Listen to Sample */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPlayingId(isPlaying ? null : coach.id);
-                    }}
-                    className="w-full flex items-center justify-center gap-3 py-2.5 rounded-lg transition-all active:scale-95"
-                    style={{
-                      background: `${coach.color}15`,
-                      border: `1px solid ${coach.color}50`,
-                      color: coach.color,
-                    }}
+                    onClick={(e) => { e.stopPropagation(); setPlayingId(isPlaying ? null : coach.id); }}
+                    className="w-full flex items-center justify-center gap-3 py-2.5 rounded-xl transition-all active:scale-95"
+                    style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}`, color: coach.color }}
                   >
-                    <motion.div
-                      animate={{ scale: isPlaying ? [1, 1.2, 1] : 1 }}
-                      transition={{ repeat: isPlaying ? Infinity : 0, duration: 0.8 }}
-                    >
+                    <motion.div animate={{ scale: isPlaying ? [1, 1.2, 1] : 1 }} transition={{ repeat: isPlaying ? Infinity : 0, duration: 0.8 }}>
                       {isPlaying ? <Pause size={14} /> : <Play size={14} />}
                     </motion.div>
                     <WaveformBars isPlaying={isPlaying} color={coach.color} />
@@ -388,55 +276,24 @@ export function CoachSelection() {
         {/* Dot indicators */}
         <div className="flex justify-center gap-2 mt-2">
           {coaches.map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => scrollToCard(idx)}
-              className="transition-all duration-300 rounded-full"
-              style={{
-                width: selectedIdx === idx ? "20px" : "6px",
-                height: "6px",
-                background: selectedIdx === idx ? selectedCoach.color : "rgba(255,255,255,0.15)",
-                boxShadow: selectedIdx === idx ? `0 0 8px ${selectedCoach.color}` : "none",
-              }}
-            />
+            <button key={idx} onClick={() => scrollToCard(idx)} className="transition-all duration-300 rounded-full"
+              style={{ width: selectedIdx === idx ? "20px" : "6px", height: "6px", background: selectedIdx === idx ? selectedCoach.color : "#D1D5DB" }} />
           ))}
         </div>
 
         {/* Nav arrows */}
         <div className="flex justify-between px-4 mt-3">
-          <button
-            onClick={() => scrollToCard(Math.max(0, selectedIdx - 1))}
-            disabled={selectedIdx === 0}
+          <button onClick={() => scrollToCard(Math.max(0, selectedIdx - 1))} disabled={selectedIdx === 0}
             className="w-10 h-10 rounded-full flex items-center justify-center transition-all active:scale-90"
-            style={{
-              background: selectedIdx === 0 ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.07)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: selectedIdx === 0 ? "#2a2b1a" : "#8a8b6a",
-            }}
-          >
+            style={{ background: selectedIdx === 0 ? "#F3F4F6" : "#FFFFFF", border: "1px solid #E5E7EB", color: selectedIdx === 0 ? "#D1D5DB" : "#6B7280" }}>
             <ChevronLeft size={18} />
           </button>
-          <span
-            style={{
-              fontSize: "10px",
-              color: "#3a3b2a",
-              fontWeight: 700,
-              letterSpacing: "0.2em",
-              alignSelf: "center",
-            }}
-          >
+          <span style={{ fontSize: "11px", color: "#9CA3AF", fontWeight: 600, letterSpacing: "0.1em", alignSelf: "center" }}>
             {selectedIdx + 1} / {coaches.length}
           </span>
-          <button
-            onClick={() => scrollToCard(Math.min(coaches.length - 1, selectedIdx + 1))}
-            disabled={selectedIdx === coaches.length - 1}
+          <button onClick={() => scrollToCard(Math.min(coaches.length - 1, selectedIdx + 1))} disabled={selectedIdx === coaches.length - 1}
             className="w-10 h-10 rounded-full flex items-center justify-center transition-all active:scale-90"
-            style={{
-              background: selectedIdx === coaches.length - 1 ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.07)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: selectedIdx === coaches.length - 1 ? "#2a2b1a" : "#8a8b6a",
-            }}
-          >
+            style={{ background: selectedIdx === coaches.length - 1 ? "#F3F4F6" : "#FFFFFF", border: "1px solid #E5E7EB", color: selectedIdx === coaches.length - 1 ? "#D1D5DB" : "#6B7280" }}>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -450,15 +307,11 @@ export function CoachSelection() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="w-full py-5 rounded-xl flex items-center justify-center gap-3"
-              style={{
-                background: "linear-gradient(135deg, rgba(24,172,183,0.2) 0%, rgba(24,172,183,0.1) 100%)",
-                border: "1.5px solid rgba(24,172,183,0.5)",
-                boxShadow: "0 0 20px rgba(24,172,183,0.2)",
-              }}
+              style={{ background: `${selectedCoach.color}15`, border: `1.5px solid ${selectedCoach.borderColor}` }}
             >
-              <Check size={20} color="#18ACB7" />
-              <span style={{ color: "#18ACB7", fontSize: "15px", fontWeight: 900, letterSpacing: "0.1em" }}>
-                {selectedCoach.alias} SELECTED
+              <Check size={20} color={selectedCoach.color} />
+              <span style={{ color: selectedCoach.color, fontSize: "15px", fontWeight: 800, letterSpacing: "0.05em" }}>
+                {selectedCoach.alias} Selected
               </span>
             </motion.div>
           ) : (
@@ -466,26 +319,15 @@ export function CoachSelection() {
               initial={{ opacity: 1 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => {
+                localStorage.setItem("ECHORUN_COACH", JSON.stringify({ alias: selectedCoach.alias, color: selectedCoach.color, emoji: selectedCoach.emoji, borderColor: selectedCoach.borderColor }));
                 setConfirmed(true);
                 setTimeout(() => navigate("/run"), 800);
               }}
               className="w-full py-5 rounded-xl flex items-center justify-center gap-3 transition-all active:scale-97"
-              style={{
-                background: "linear-gradient(135deg, #F2403B 0%, #c4261f 100%)",
-                boxShadow: "0 0 25px rgba(242,64,59,0.4), 0 4px 15px rgba(0,0,0,0.4)",
-                border: "1px solid rgba(242,64,59,0.3)",
-              }}
+              style={{ background: selectedCoach.color, boxShadow: `0 4px 16px ${selectedCoach.glowColor}`, border: "none" }}
             >
-              <span
-                style={{
-                  color: "#fff",
-                  fontSize: "16px",
-                  fontWeight: 900,
-                  letterSpacing: "0.12em",
-                  fontFamily: "'Archivo Black', sans-serif",
-                }}
-              >
-                CONFIRM SELECTION
+              <span style={{ color: "#fff", fontSize: "16px", fontWeight: 800, letterSpacing: "0.06em", fontFamily: "'Archivo Black', sans-serif" }}>
+                Confirm Selection
               </span>
             </motion.button>
           )}
