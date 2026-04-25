@@ -6,6 +6,13 @@ import { getProfile } from "../../utils/profile.js";
 import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
 
+const voiceSettings: Record<string, { rate: number; pitch: number; volume: number }> = {
+  DREDD:   { rate: 1.05, pitch: 0.75, volume: 1 },
+  KIRA:    { rate: 0.85, pitch: 1.05, volume: 0.9 },
+  TITAN:   { rate: 1.15, pitch: 0.8,  volume: 1 },
+  SPECTER: { rate: 0.95, pitch: 0.9,  volume: 1 },
+};
+
 const coaches = [
   {
     id: 1,
@@ -99,6 +106,55 @@ function WaveformBars({ isPlaying, color }: { isPlaying: boolean; color: string 
   );
 }
 
+function getEnglishVoice(): Promise<SpeechSynthesisVoice | null> {
+  return new Promise((resolve) => {
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      resolve(voices.find((v) => v.lang.startsWith("en")) ?? null);
+      return;
+    }
+    // Voices not loaded yet — wait for the event
+    const onVoicesChanged = () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+      const loaded = window.speechSynthesis.getVoices();
+      resolve(loaded.find((v) => v.lang.startsWith("en")) ?? null);
+    };
+    window.speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
+    // Fallback: if event never fires within 1s, proceed without a voice
+    setTimeout(() => {
+      window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+      resolve(null);
+    }, 1000);
+  });
+}
+
+async function playCoachSample(
+  coach: (typeof coaches)[number],
+  setPlayingId: (id: number | null) => void
+) {
+  if (!("speechSynthesis" in window)) {
+    alert("Voice preview is not supported in this browser.");
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  setPlayingId(coach.id);
+
+  const utterance = new SpeechSynthesisUtterance(coach.sample);
+  const settings = voiceSettings[coach.alias] ?? { rate: 1, pitch: 1, volume: 1 };
+  utterance.rate = settings.rate;
+  utterance.pitch = settings.pitch;
+  utterance.volume = settings.volume;
+
+  const enVoice = await getEnglishVoice();
+  if (enVoice) utterance.voice = enVoice;
+
+  utterance.onend = () => setPlayingId(null);
+  utterance.onerror = () => setPlayingId(null);
+
+  window.speechSynthesis.speak(utterance);
+}
+
 export function CoachSelection() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [playingId, setPlayingId] = useState<number | null>(null);
@@ -109,6 +165,7 @@ export function CoachSelection() {
 
   useEffect(() => {
     setProfile(getProfile());
+    return () => { window.speechSynthesis?.cancel(); };
   }, []);
 
   const scrollToCard = useCallback((index: number) => {
@@ -255,7 +312,15 @@ export function CoachSelection() {
                   </div>
 
                   <button
-                    onClick={(e) => { e.stopPropagation(); setPlayingId(isPlaying ? null : coach.id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isPlaying) {
+                        window.speechSynthesis.cancel();
+                        setPlayingId(null);
+                      } else {
+                        playCoachSample(coach, setPlayingId);
+                      }
+                    }}
                     className="w-full flex items-center justify-center gap-3 py-2.5 rounded-xl transition-all active:scale-95"
                     style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}`, color: coach.color }}
                   >
