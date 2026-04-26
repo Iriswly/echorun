@@ -1,11 +1,23 @@
+## Running the project
 
-  # High-Fidelity Mobile UI Design
+Run `npm i` to install dependencies.
 
-  This is a code bundle for High-Fidelity Mobile UI Design. The original project is available at https://www.figma.com/design/vuQYChIbAaSXmNcm6iAyKA/High-Fidelity-Mobile-UI-Design.
+Run `npm run dev` to start the development server.
 
-  ## Running the code
+## AMap live location setup
 
-  Run `npm i` to install the dependencies.
+This project uses the AMap JavaScript API on the `liverun` screen and stays fully frontend-only.
 
-  Run `npm run dev` to start the development server.
-  
+Create a local env file such as `.env.local` in the project root and add:
+
+```bash
+VITE_AMAP_API_KEY=your_amap_js_api_key
+VITE_AMAP_SECURITY_JS_CODE=your_amap_security_js_code
+```
+
+Notes:
+
+- `VITE_AMAP_API_KEY` is required.
+- `VITE_AMAP_SECURITY_JS_CODE` is recommended for current AMap web security checks.
+- After editing env vars, restart `npm run dev`.
+- In the browser, allow location permission, otherwise live tracking cannot work.

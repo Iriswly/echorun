@@ -43,6 +43,12 @@ function fmtDist(m: number) {
   return m >= 1000 ? `${(m / 1000).toFixed(2)}km` : `${Math.round(m)}m`;
 }
 
+function getRunSourceLabel(run: any) {
+  if (run.source === "friend") return run.runnerName ? `FRIEND • ${String(run.runnerName).toUpperCase()}` : "FRIEND";
+  if (run.source === "self") return "YOU";
+  return "RUN";
+}
+
 function ResultPill({ result }: { result: "win"|"lose"|"tie" }) {
   const cfg = {
     win:  { label:"WIN",  bg:"#F0FDF4", border:"#6EE7B7", color:"#10B981" },
@@ -189,6 +195,14 @@ export function PostRunDashboard() {
                       {/* Top row */}
                       <div className="flex items-start justify-between mb-3">
                         <div>
+                          <div style={{ fontSize:"8px", color:"#9CA3AF", fontWeight:700, letterSpacing:"0.14em", marginBottom:"4px" }}>
+                            {getRunSourceLabel(run)}
+                          </div>
+                          {run.title && (
+                            <div style={{ fontSize:"13px", fontWeight:700, color:"#111827", marginBottom:"4px", lineHeight:1.2 }}>
+                              {run.title}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 mb-1">
                             <span style={{ fontSize:"12px", fontWeight:700, color:"#111827" }}>{fmtDate(run.date)}</span>
                             <span style={{ fontSize:"10px", color:"#9CA3AF" }}>{fmtTime(run.date)}</span>
