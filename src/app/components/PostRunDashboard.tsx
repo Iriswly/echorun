@@ -89,25 +89,25 @@ export function PostRunDashboard() {
   const unlockedBadges = new Set(profile?.badges || []);
 
   return (
-    <div className="relative flex flex-col h-full overflow-hidden" style={{ background:"#F7F8FA" }}>
+    <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background:"#F7F8FA" }}>
       {/* Header */}
-      <div className="flex-shrink-0 px-5 pt-10 pb-4 relative z-10 bg-white" style={{ borderBottom:"1px solid #E5E7EB" }}>
-        <div className="flex items-start justify-between mb-3">
-          <div>
+      <div className="flex-shrink-0 px-4 sm:px-5 pt-10 pb-4 relative z-10 bg-white" style={{ borderBottom:"1px solid #E5E7EB" }}>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
             <div style={{ fontSize:"10px", color:"#2563EB", fontWeight:700, letterSpacing:"0.2em", marginBottom:"2px" }}>ECHORUN</div>
             <h1 style={{ fontSize:"24px", fontWeight:800, color:"#111827", letterSpacing:"-0.02em", lineHeight:1.1, fontFamily:"'Archivo Black', sans-serif" }}>
               Run Archive
             </h1>
           </div>
           {profile && levelInfo && (
-            <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-col items-end gap-1 min-w-0">
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
                 <Trophy size={10} color="#2563EB" />
                 <span style={{ fontSize:"10px", color:"#2563EB", fontWeight:700, letterSpacing:"0.05em" }}>
                   LVL {levelInfo.level}
                 </span>
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-wrap justify-end gap-3">
                 {[
                   { label:"RUNS",  value: profile.totalRuns },
                   { label:"KM",    value: (profile.totalDistance / 1000).toFixed(1) },
@@ -140,7 +140,7 @@ export function PostRunDashboard() {
       <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth:"none", msOverflowStyle:"none" }}>
 
         {/* === BADGE SHELF === */}
-        <div className="px-5 pt-4 pb-3">
+        <div className="px-4 sm:px-5 pt-4 pb-3">
           <div className="flex items-center gap-2 mb-3">
             <Star size={12} color="#F59E0B" fill="#F59E0B" />
             <span style={{ fontSize:"12px", color:"#111827", fontWeight:700 }}>Badges</span>
@@ -163,7 +163,7 @@ export function PostRunDashboard() {
         </div>
 
         {/* === RUN HISTORY === */}
-        <div className="px-5 pb-3">
+        <div className="px-4 sm:px-5 pb-3">
           <div className="flex items-center justify-between mb-3 pt-1" style={{ borderTop:"1px solid #E5E7EB" }}>
             <div className="flex items-center gap-2 pt-3">
               <Zap size={12} color="#2563EB" />
@@ -193,8 +193,8 @@ export function PostRunDashboard() {
                       style={{ background:"#FFFFFF", border:"1px solid #E5E7EB", boxShadow:"0 2px 8px rgba(15,23,42,0.06)" }}>
 
                       {/* Top row */}
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0">
                           <div style={{ fontSize:"8px", color:"#9CA3AF", fontWeight:700, letterSpacing:"0.14em", marginBottom:"4px" }}>
                             {getRunSourceLabel(run)}
                           </div>
@@ -203,11 +203,11 @@ export function PostRunDashboard() {
                               {run.title}
                             </div>
                           )}
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
                             <span style={{ fontSize:"12px", fontWeight:700, color:"#111827" }}>{fmtDate(run.date)}</span>
                             <span style={{ fontSize:"10px", color:"#9CA3AF" }}>{fmtTime(run.date)}</span>
                           </div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <div className="px-1.5 py-0.5 rounded-full" style={{ background: run.mode === "ghost" ? "#FFF7ED" : "#EFF6FF", border: run.mode === "ghost" ? "1px solid #FDBA74" : "1px solid #BFDBFE", fontSize:"8px", color: run.mode === "ghost" ? "#F97316" : "#2563EB", fontWeight:700, letterSpacing:"0.08em" }}>
                               {run.mode === "ghost" ? "👻 GHOST" : "🏃 STANDARD"}
                             </div>
@@ -216,7 +216,7 @@ export function PostRunDashboard() {
                         </div>
                         {/* Points */}
                         {run.pointsEarned != null && (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ background:"#FFFBEB", border:"1px solid #FDE68A" }}>
+                          <div className="flex flex-shrink-0 items-center gap-1 px-2 py-1 rounded-full" style={{ background:"#FFFBEB", border:"1px solid #FDE68A" }}>
                             <Star size={9} fill="#F59E0B" color="#F59E0B" />
                             <span style={{ fontSize:"11px", fontWeight:800, color:"#D97706", fontFamily:"'Archivo Black', sans-serif" }}>+{run.pointsEarned}</span>
                           </div>
@@ -224,7 +224,7 @@ export function PostRunDashboard() {
                       </div>
 
                       {/* Stats row */}
-                      <div className="flex gap-4 mb-3">
+                      <div className="flex flex-wrap gap-x-4 gap-y-3 mb-3">
                         {[
                           { label:"DIST", value: fmtDist(run.distance) },
                           { label:"TIME", value: fmtDuration(run.duration) },
@@ -246,7 +246,7 @@ export function PostRunDashboard() {
                       </div>
 
                       {/* Actions */}
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 max-[340px]:flex-col">
                         <motion.button whileTap={{ scale:0.95 }} onClick={() => handleChallenge(run)}
                           className="flex-1 py-2 rounded-xl flex items-center justify-center gap-1.5"
                           style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
@@ -271,7 +271,7 @@ export function PostRunDashboard() {
         </div>
 
         {/* === GHOST POOL (mock / coming soon) === */}
-        <div className="px-5 pb-3">
+        <div className="px-4 sm:px-5 pb-3">
           <div className="flex items-center gap-2 mb-3 pt-2" style={{ borderTop:"1px solid #E5E7EB" }}>
             <Ghost size={12} color="#7C3AED" />
             <span style={{ fontSize:"12px", color:"#111827", fontWeight:700 }}>Ghost Pool</span>
@@ -287,17 +287,17 @@ export function PostRunDashboard() {
         </div>
 
         {/* === PRIVACY TOGGLE === */}
-        <div className="px-5 pb-8">
+        <div className="px-4 sm:px-5 pb-8">
           <motion.div initial={{ opacity:0, y:20 }} animate={{ opacity:1, y:0 }} transition={{ delay:0.4 }}
             className="p-4 rounded-xl"
             style={{ background:"#FFFFFF", border: isPublic ? "1px solid #BFDBFE" : "1px solid #E5E7EB", boxShadow:"0 2px 8px rgba(15,23,42,0.06)", transition:"all 0.4s ease" }}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center"
                   style={{ background: isPublic ? "#EFF6FF" : "#F3F4F6", border: isPublic ? "1px solid #BFDBFE" : "1px solid #E5E7EB", transition:"all 0.3s ease" }}>
                   {isPublic ? <Globe size={16} color="#2563EB" /> : <Lock size={16} color="#9CA3AF" />}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div style={{ fontSize:"12px", fontWeight:700, color:"#111827" }}>Share to community</div>
                   <div style={{ fontSize:"10px", color:"#6B7280", fontWeight:500, marginTop:"1px" }}>
                     {isPublic ? "Your pace data is visible to others" : "Run data is private"}

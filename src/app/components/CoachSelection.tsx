@@ -170,9 +170,11 @@ export function CoachSelection() {
 
   const scrollToCard = useCallback((index: number) => {
     if (!scrollRef.current) return;
-    const cardWidth = 280 + 16;
+    const firstCard = scrollRef.current.firstElementChild as HTMLElement | null;
+    const cardWidth = (firstCard?.getBoundingClientRect().width ?? 280) + 16;
     const containerWidth = scrollRef.current.offsetWidth;
-    const offset = index * cardWidth - (containerWidth - 280) / 2;
+    const visibleCardWidth = firstCard?.getBoundingClientRect().width ?? Math.min(280, containerWidth - 48);
+    const offset = index * cardWidth - (containerWidth - visibleCardWidth) / 2;
     scrollRef.current.scrollTo({ left: offset, behavior: "smooth" });
     setSelectedIdx(index);
   }, []);
@@ -183,7 +185,8 @@ export function CoachSelection() {
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
-    const cardWidth = 280 + 16;
+    const firstCard = scrollRef.current.firstElementChild as HTMLElement | null;
+    const cardWidth = (firstCard?.getBoundingClientRect().width ?? 280) + 16;
     const scrollLeft = scrollRef.current.scrollLeft;
     const clampedIndex = Math.max(0, Math.min(coaches.length - 1, Math.round(scrollLeft / cardWidth)));
     setSelectedIdx(clampedIndex);
@@ -193,7 +196,7 @@ export function CoachSelection() {
   const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
 
   return (
-    <div className="relative flex flex-col h-full" style={{ background: "#F7F8FA" }}>
+    <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background: "#F7F8FA" }}>
       <motion.div
         key={selectedCoach.id}
         initial={{ opacity: 0 }}
@@ -204,10 +207,13 @@ export function CoachSelection() {
       />
 
       {/* Scrollable content */}
-      <div className="relative z-10" style={{ paddingBottom: "8px" }}>
+      <div
+        className="echorun-scroll-hidden relative z-10 flex-1 min-h-0 overflow-y-auto"
+        style={{ paddingBottom: "8px", scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
 
         {/* Header */}
-        <div className="px-6 pt-4 pb-1">
+        <div className="px-4 sm:px-6 pt-4 pb-1">
           <div className="flex items-center justify-between mb-1.5">
             <span style={{ fontSize: "11px", letterSpacing: "0.2em", color: selectedCoach.color, fontWeight: 700, fontFamily: "'Archivo', sans-serif" }}>
               ECHORUN
@@ -227,7 +233,7 @@ export function CoachSelection() {
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-xl"
+              className="flex items-center gap-2 mt-2 px-2.5 py-1.5 rounded-xl flex-wrap"
               style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 1px 4px rgba(15,23,42,0.06)" }}
             >
               <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg" style={{ background: `${selectedCoach.color}12`, border: `1px solid ${selectedCoach.borderColor}` }}>
@@ -262,7 +268,13 @@ export function CoachSelection() {
             ref={scrollRef}
             onScroll={handleScroll}
             className="flex gap-4 overflow-x-auto"
-            style={{ scrollSnapType: "x mandatory", scrollbarWidth: "none", msOverflowStyle: "none", paddingLeft: "55px", paddingRight: "55px", paddingBottom: "8px" }}
+            style={{
+              scrollSnapType: "x mandatory",
+              scrollbarWidth: "none",
+              msOverflowStyle: "none",
+              paddingInline: "max(16px, calc((100% - min(280px, calc(100vw - 48px))) / 2))",
+              paddingBottom: "8px",
+            }}
           >
             {coaches.map((coach, idx) => {
               const isActive = idx === selectedIdx;
@@ -275,10 +287,10 @@ export function CoachSelection() {
                   animate={{ scale: isActive ? 1 : 0.9, opacity: isActive ? 1 : 0.65 }}
                   transition={{ duration: 0.3 }}
                   className="relative flex-shrink-0 rounded-2xl overflow-hidden cursor-pointer"
-                  style={{ width: "280px", scrollSnapAlign: "center", background: "#FFFFFF", border: `1.5px solid ${isActive ? coach.borderColor : "#E5E7EB"}`, boxShadow: isActive ? "0 8px 24px rgba(15,23,42,0.10)" : "0 2px 8px rgba(15,23,42,0.06)" }}
+                  style={{ width: "min(280px, calc(100vw - 48px))", maxWidth: "100%", scrollSnapAlign: "center", background: "#FFFFFF", border: `1.5px solid ${isActive ? coach.borderColor : "#E5E7EB"}`, boxShadow: isActive ? "0 8px 24px rgba(15,23,42,0.10)" : "0 2px 8px rgba(15,23,42,0.06)" }}
                 >
                   {/* Image area */}
-                  <div className="relative overflow-hidden" style={{ height: "200px" }}>
+                  <div className="relative overflow-hidden" style={{ height: "clamp(150px, 24dvh, 200px)" }}>
                     <img src={coach.avatar} alt={coach.name} className="w-full h-full object-cover" style={{ filter: "saturate(0.75) brightness(1.05)" }} />
                     <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, rgba(255,255,255,0.95) 100%)" }} />
                     <div className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.9)", border: `1px solid ${coach.borderColor}`, fontSize: "20px" }}>
@@ -296,12 +308,12 @@ export function CoachSelection() {
                     <h3 style={{ fontSize: "20px", fontWeight: 800, color: "#111827", letterSpacing: "-0.01em", lineHeight: 1.1, fontFamily: "'Archivo Black', sans-serif", marginBottom: "4px" }}>{coach.name}</h3>
                     <p style={{ fontSize: "12px", color: "#6B7280", marginBottom: "10px", lineHeight: 1.4 }}>{coach.description}</p>
 
-                    <div className="flex gap-2 mb-3">
-                      <div className="flex items-center gap-1 px-3 py-1 rounded-full" style={{ background: `${coach.color}12`, border: `1px solid ${coach.borderColor}` }}>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      <div className="flex items-center gap-1 px-3 py-1 rounded-full min-w-0" style={{ background: `${coach.color}12`, border: `1px solid ${coach.borderColor}` }}>
                         <span style={{ fontSize: "9px", color: "#9CA3AF", fontWeight: 600, letterSpacing: "0.08em" }}>STYLE</span>
                         <span style={{ fontSize: "12px", color: coach.color, fontWeight: 700 }}>{coach.style}</span>
                       </div>
-                      <div className="flex items-center gap-1 px-3 py-1 rounded-full" style={{ background: "#F3F4F6", border: "1px solid #E5E7EB" }}>
+                      <div className="flex items-center gap-1 px-3 py-1 rounded-full min-w-0" style={{ background: "#F3F4F6", border: "1px solid #E5E7EB" }}>
                         <span style={{ fontSize: "9px", color: "#9CA3AF", fontWeight: 600, letterSpacing: "0.08em" }}>VIBE</span>
                         <span style={{ fontSize: "12px", color: "#374151", fontWeight: 700 }}>{coach.vibe}</span>
                       </div>
@@ -369,7 +381,7 @@ export function CoachSelection() {
 
       {/* Sticky Confirm button — sits above bottom nav */}
       <div
-        className="relative z-20 px-6 py-3"
+        className="relative z-20 flex-shrink-0 px-4 sm:px-6 py-3"
         style={{ background: "linear-gradient(to top, #F7F8FA 70%, transparent)", borderTop: "1px solid rgba(229,231,235,0.6)" }}
       >
         <AnimatePresence mode="wait">

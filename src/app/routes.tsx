@@ -16,16 +16,13 @@ function Root() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center"
+      className="echorun-root min-h-screen flex items-center justify-center"
       style={{ background: "#F0F2F5" }}
     >
       {/* Mobile phone frame */}
       <div
-        className="relative w-full overflow-hidden flex flex-col"
+        className="echorun-app-shell relative overflow-hidden flex flex-col"
         style={{
-          maxWidth: "390px",
-          height: "100dvh",
-          maxHeight: "844px",
           background: "#F7F8FA",
           boxShadow: "0 8px 40px rgba(15,23,42,0.12)",
           fontFamily: "'Archivo', sans-serif",
@@ -52,7 +49,7 @@ function Root() {
               <button
                 key={tab.path}
                 onClick={() => navigate(tab.path)}
-                className="relative flex-1 flex flex-col items-center gap-1 py-3 transition-all duration-200 active:scale-95"
+                className="relative flex-1 min-w-0 flex flex-col items-center gap-1 py-3 transition-all duration-200 active:scale-95"
                 style={{
                   color: isActive ? "#2563EB" : "#9CA3AF",
                 }}
