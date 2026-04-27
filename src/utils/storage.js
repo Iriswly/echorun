@@ -1,3 +1,5 @@
+import { getStorageKey } from "./auth.js";
+
 const RUNS_KEY = "ECHORUN_RUNS";
 const MOCK_VERSION_KEY = "ECHORUN_MOCK_RUNS_VERSION";
 const MOCK_VERSION = "ghost-v2";
@@ -119,7 +121,9 @@ function normalizeRunRecord(record) {
 }
 
 function ensureMockRuns(history) {
-  const seededVersion = localStorage.getItem(MOCK_VERSION_KEY);
+  const runsKey = getStorageKey(RUNS_KEY);
+  const mockVersionKey = getStorageKey(MOCK_VERSION_KEY);
+  const seededVersion = localStorage.getItem(mockVersionKey);
   const baseHistory = Array.isArray(history) ? history : [];
   const withoutMocks = baseHistory.filter((record) => !record?.isMock);
   const nextHistory = [...withoutMocks, ...createMockRuns()]
@@ -127,8 +131,8 @@ function ensureMockRuns(history) {
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   if (seededVersion !== MOCK_VERSION || nextHistory.length !== baseHistory.length) {
-    localStorage.setItem(RUNS_KEY, JSON.stringify(nextHistory));
-    localStorage.setItem(MOCK_VERSION_KEY, MOCK_VERSION);
+    localStorage.setItem(runsKey, JSON.stringify(nextHistory));
+    localStorage.setItem(mockVersionKey, MOCK_VERSION);
   }
 
   return nextHistory;
@@ -136,13 +140,13 @@ function ensureMockRuns(history) {
 
 export function getRunHistory() {
   try {
-    const raw = localStorage.getItem(RUNS_KEY);
+    const raw = localStorage.getItem(getStorageKey(RUNS_KEY));
     const history = raw ? JSON.parse(raw) : [];
     return ensureMockRuns(history);
   } catch {
     const mockRuns = createMockRuns();
-    localStorage.setItem(RUNS_KEY, JSON.stringify(mockRuns));
-    localStorage.setItem(MOCK_VERSION_KEY, MOCK_VERSION);
+    localStorage.setItem(getStorageKey(RUNS_KEY), JSON.stringify(mockRuns));
+    localStorage.setItem(getStorageKey(MOCK_VERSION_KEY), MOCK_VERSION);
     return mockRuns;
   }
 }
@@ -155,7 +159,7 @@ export function saveRunRecord(record) {
     savedAt: new Date().toISOString(),
   });
   const nextHistory = [newRecord, ...history];
-  localStorage.setItem(RUNS_KEY, JSON.stringify(nextHistory));
-  localStorage.removeItem(MOCK_VERSION_KEY);
+  localStorage.setItem(getStorageKey(RUNS_KEY), JSON.stringify(nextHistory));
+  localStorage.removeItem(getStorageKey(MOCK_VERSION_KEY));
   return newRecord;
 }

@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Trash2, Shield, Globe, Lock, Star, Trophy, Zap, Ghost } from "lucide-react";
+import { Trash2, Shield, Globe, Lock, Star, Trophy, Zap, Ghost, LogOut } from "lucide-react";
 import { useNavigate } from "react-router";
 import { getProfile } from "../../utils/profile.js";
 import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
 import { getRunHistory } from "../../utils/storage.js";
+import { getCurrentUser, getStorageKey, logoutAccount } from "../../utils/auth.js";
 
 function deleteRunRecord(id: number) {
   try {
-    const raw = localStorage.getItem("ECHORUN_RUNS");
+    const raw = localStorage.getItem(getStorageKey("ECHORUN_RUNS"));
     const runs = raw ? JSON.parse(raw) : [];
-    localStorage.setItem("ECHORUN_RUNS", JSON.stringify(runs.filter((r: any) => r.id !== id)));
+    localStorage.setItem(getStorageKey("ECHORUN_RUNS"), JSON.stringify(runs.filter((r: any) => r.id !== id)));
   } catch {}
 }
 
@@ -67,12 +68,14 @@ export function PostRunDashboard() {
   const navigate = useNavigate();
   const [runs, setRuns] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
+  const [user, setUser] = useState<any>(getCurrentUser());
   const [isPublic, setIsPublic] = useState(false);
   const [deletingId, setDeletingId] = useState<number|null>(null);
 
   useEffect(() => {
     setRuns(getRunHistory());
     setProfile(getProfile());
+    setUser(getCurrentUser());
   }, []);
 
   const handleDelete = (id: number) => {
@@ -83,6 +86,10 @@ export function PostRunDashboard() {
 
   const handleChallenge = (run: any) => {
     navigate("/run", { state: { mode:"ghost", ghostRecord: run } });
+  };
+
+  const handleLogout = () => {
+    logoutAccount();
   };
 
   const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
@@ -98,14 +105,29 @@ export function PostRunDashboard() {
             <h1 style={{ fontSize:"24px", fontWeight:800, color:"#111827", letterSpacing:"-0.02em", lineHeight:1.1, fontFamily:"'Archivo Black', sans-serif" }}>
               Run Archive
             </h1>
+            {user && (
+              <div style={{ fontSize:"10px", color:"#6B7280", fontWeight:600, marginTop:"4px" }}>
+                {user.name}
+              </div>
+            )}
           </div>
           {profile && levelInfo && (
             <div className="flex flex-col items-end gap-1 min-w-0">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
-                <Trophy size={10} color="#2563EB" />
-                <span style={{ fontSize:"10px", color:"#2563EB", fontWeight:700, letterSpacing:"0.05em" }}>
-                  LVL {levelInfo.level}
-                </span>
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
+                  <Trophy size={10} color="#2563EB" />
+                  <span style={{ fontSize:"10px", color:"#2563EB", fontWeight:700, letterSpacing:"0.05em" }}>
+                    LVL {levelInfo.level}
+                  </span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95"
+                  style={{ background:"#F9FAFB", border:"1px solid #E5E7EB" }}
+                  aria-label="Logout"
+                >
+                  <LogOut size={12} color="#6B7280" />
+                </button>
               </div>
               <div className="flex flex-wrap justify-end gap-3">
                 {[

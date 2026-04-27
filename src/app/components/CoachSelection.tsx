@@ -5,6 +5,7 @@ import { useNavigate } from "react-router";
 import { getProfile } from "../../utils/profile.js";
 import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
+import { getStorageKey } from "../../utils/auth.js";
 import { getAudioStatus, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 
 const coaches = [
@@ -376,7 +377,7 @@ export function CoachSelection() {
               initial={{ opacity: 1 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => {
-                localStorage.setItem("ECHORUN_COACH", JSON.stringify({ alias: selectedCoach.alias, color: selectedCoach.color, emoji: selectedCoach.emoji, borderColor: selectedCoach.borderColor }));
+                localStorage.setItem(getStorageKey("ECHORUN_COACH"), JSON.stringify({ alias: selectedCoach.alias, color: selectedCoach.color, emoji: selectedCoach.emoji, borderColor: selectedCoach.borderColor }));
                 setConfirmed(true);
                 setTimeout(() => navigate("/run"), 800);
               }}

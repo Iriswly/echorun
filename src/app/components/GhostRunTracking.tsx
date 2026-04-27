@@ -7,6 +7,7 @@ import { evaluateBadges, ALL_BADGES } from "../../utils/badges.js";
 import { updateProfileAfterRun, getProfile } from "../../utils/profile.js";
 import { saveRunRecord } from "../../utils/storage.js";
 import { getCoachMessage, resetCoachSession } from "../../utils/coachMessages.js";
+import { getStorageKey } from "../../utils/auth.js";
 import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 import { LiveRunMap } from "./LiveRunMap";
 
@@ -224,7 +225,7 @@ export function GhostRunTracking() {
 
   const storedCoach = (() => {
     try {
-      return JSON.parse(localStorage.getItem("ECHORUN_COACH") || "{}");
+      return JSON.parse(localStorage.getItem(getStorageKey("ECHORUN_COACH")) || "{}");
     } catch {
       return {};
     }

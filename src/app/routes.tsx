@@ -1,12 +1,32 @@
+import { useEffect, useState } from "react";
 import { createBrowserRouter, Outlet, useNavigate, useLocation } from "react-router";
 import { CoachSelection } from "./components/CoachSelection";
 import { GhostRunTracking } from "./components/GhostRunTracking";
 import { PostRunDashboard } from "./components/PostRunDashboard";
+import { AuthScreen } from "./components/AuthScreen";
+import { LandingScreen } from "./components/LandingScreen";
+import { getCurrentUser } from "../utils/auth.js";
 import { Zap, Radio, Trophy } from "lucide-react";
 
 function Root() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [currentUser, setCurrentUser] = useState(getCurrentUser());
+  const [showAuth, setShowAuth] = useState(false);
+
+  useEffect(() => {
+    const updateUser = () => {
+      const nextUser = getCurrentUser();
+      setCurrentUser(nextUser);
+      if (!nextUser) setShowAuth(false);
+    };
+    window.addEventListener("echorun-auth-change", updateUser);
+    window.addEventListener("storage", updateUser);
+    return () => {
+      window.removeEventListener("echorun-auth-change", updateUser);
+      window.removeEventListener("storage", updateUser);
+    };
+  }, []);
 
   const tabs = [
     { path: "/", icon: Zap, label: "COACH" },
@@ -29,53 +49,63 @@ function Root() {
         }}
       >
 
-        {/* Content area */}
-        <div className="flex-1 overflow-hidden">
-          <Outlet />
-        </div>
+        {!currentUser ? (
+          showAuth ? (
+            <AuthScreen onAuthenticated={() => setCurrentUser(getCurrentUser())} />
+          ) : (
+            <LandingScreen onContinue={() => setShowAuth(true)} />
+          )
+        ) : (
+          <>
+            {/* Content area */}
+            <div className="flex-1 overflow-hidden">
+              <Outlet />
+            </div>
 
-        {/* Bottom Navigation */}
-        <div
-          className="relative z-50 flex"
-          style={{
-            background: "#FFFFFF",
-            borderTop: "1px solid #E5E7EB",
-          }}
-        >
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = location.pathname === tab.path;
-            return (
-              <button
-                key={tab.path}
-                onClick={() => navigate(tab.path)}
-                className="relative flex-1 min-w-0 flex flex-col items-center gap-1 py-3 transition-all duration-200 active:scale-95"
-                style={{
-                  color: isActive ? "#2563EB" : "#9CA3AF",
-                }}
-              >
-                <Icon size={22} />
-                <span
-                  className="uppercase tracking-widest"
-                  style={{
-                    fontSize: "9px",
-                    fontWeight: 700,
-                    fontFamily: "'Archivo', sans-serif",
-                    letterSpacing: "0.12em",
-                  }}
-                >
-                  {tab.label}
-                </span>
-                {isActive && (
-                  <div
-                    className="absolute top-0 h-0.5 w-12 rounded-full"
-                    style={{ background: "#2563EB" }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
+            {/* Bottom Navigation */}
+            <div
+              className="relative z-50 flex"
+              style={{
+                background: "#FFFFFF",
+                borderTop: "1px solid #E5E7EB",
+              }}
+            >
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = location.pathname === tab.path;
+                return (
+                  <button
+                    key={tab.path}
+                    onClick={() => navigate(tab.path)}
+                    className="relative flex-1 min-w-0 flex flex-col items-center gap-1 py-3 transition-all duration-200 active:scale-95"
+                    style={{
+                      color: isActive ? "#2563EB" : "#9CA3AF",
+                    }}
+                  >
+                    <Icon size={22} />
+                    <span
+                      className="uppercase tracking-widest"
+                      style={{
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        fontFamily: "'Archivo', sans-serif",
+                        letterSpacing: "0.12em",
+                      }}
+                    >
+                      {tab.label}
+                    </span>
+                    {isActive && (
+                      <div
+                        className="absolute top-0 h-0.5 w-12 rounded-full"
+                        style={{ background: "#2563EB" }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

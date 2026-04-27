@@ -1,3 +1,5 @@
+import { getStorageKey } from "./auth.js";
+
 const AUDIO_ENABLED_KEY = "ECHORUN_AUDIO_ENABLED";
 
 export const COACH_VOICE_SETTINGS = {
@@ -22,7 +24,7 @@ export function isSpeechSupported() {
 
 export function isAudioEnabled() {
   if (!hasWindow()) return true;
-  return localStorage.getItem(AUDIO_ENABLED_KEY) !== "false";
+  return localStorage.getItem(getStorageKey(AUDIO_ENABLED_KEY)) !== "false";
 }
 
 function notifyAudioStatus() {
@@ -38,7 +40,7 @@ export function subscribeAudioStatus(listener) {
 
 export function setAudioEnabled(enabled) {
   if (!hasWindow()) return;
-  localStorage.setItem(AUDIO_ENABLED_KEY, enabled ? "true" : "false");
+  localStorage.setItem(getStorageKey(AUDIO_ENABLED_KEY), enabled ? "true" : "false");
   if (!enabled) stopSpeech();
   notifyAudioStatus();
 }
