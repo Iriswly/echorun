@@ -13,7 +13,7 @@ const messages = {
     distance_500m:["500 meters. You're just warming up.", "Half a km. Ghost is watching."],
     distance_1km: ["1K done. Ghost isn't impressed yet.", "One kilometer. Keep the pressure."],
     distance_2km: ["2K. You're still here. Good.", "Two kilometers in. Don't fade now."],
-    time_5min:    ["5 minutes. Ghost has been running longer. Catch up.", "5 min in. Pace check — is that all you've got?"],
+    time_5min:    ["5 minutes. Ghost has been running longer. Catch up.", "5 min in. Pace check - is that all you've got?"],
     time_10min:   ["10 minutes. You better be hurting.", "10 min. This is where weak runners quit."],
   },
   KIRA: {
@@ -83,13 +83,4 @@ export function getCoachMessage(coachAlias, event) {
 
 export function resetCoachSession() {
   triggered.clear();
-}
-
-export function speakMessage(text) {
-  if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.rate = 1.05;
-  utt.pitch = 1;
-  window.speechSynthesis.speak(utt);
 }

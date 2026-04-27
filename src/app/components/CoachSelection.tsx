@@ -1,17 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Play, Pause, ChevronLeft, ChevronRight, Check, Trophy, Star } from "lucide-react";
+import { Play, Pause, ChevronLeft, ChevronRight, Check, Trophy, Star, Volume2, VolumeX } from "lucide-react";
 import { useNavigate } from "react-router";
 import { getProfile } from "../../utils/profile.js";
 import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
-
-const voiceSettings: Record<string, { rate: number; pitch: number; volume: number }> = {
-  DREDD:   { rate: 1.05, pitch: 0.75, volume: 1 },
-  KIRA:    { rate: 0.85, pitch: 1.05, volume: 0.9 },
-  TITAN:   { rate: 1.15, pitch: 0.8,  volume: 1 },
-  SPECTER: { rate: 0.95, pitch: 0.9,  volume: 1 },
-};
+import { getAudioStatus, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 
 const coaches = [
   {
@@ -106,53 +100,22 @@ function WaveformBars({ isPlaying, color }: { isPlaying: boolean; color: string 
   );
 }
 
-function getEnglishVoice(): Promise<SpeechSynthesisVoice | null> {
-  return new Promise((resolve) => {
-    const voices = window.speechSynthesis.getVoices();
-    if (voices.length > 0) {
-      resolve(voices.find((v) => v.lang.startsWith("en")) ?? null);
-      return;
-    }
-    // Voices not loaded yet — wait for the event
-    const onVoicesChanged = () => {
-      window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
-      const loaded = window.speechSynthesis.getVoices();
-      resolve(loaded.find((v) => v.lang.startsWith("en")) ?? null);
-    };
-    window.speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
-    // Fallback: if event never fires within 1s, proceed without a voice
-    setTimeout(() => {
-      window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
-      resolve(null);
-    }, 1000);
-  });
-}
-
 async function playCoachSample(
   coach: (typeof coaches)[number],
   setPlayingId: (id: number | null) => void
 ) {
-  if (!("speechSynthesis" in window)) {
-    alert("Voice preview is not supported in this browser.");
+  const audioStatus = getAudioStatus();
+  if (!audioStatus.supported) {
+    alert(audioStatus.lastError || "Voice preview is not supported in this browser.");
     return;
   }
 
-  window.speechSynthesis.cancel();
-  setPlayingId(coach.id);
-
-  const utterance = new SpeechSynthesisUtterance(coach.sample);
-  const settings = voiceSettings[coach.alias] ?? { rate: 1, pitch: 1, volume: 1 };
-  utterance.rate = settings.rate;
-  utterance.pitch = settings.pitch;
-  utterance.volume = settings.volume;
-
-  const enVoice = await getEnglishVoice();
-  if (enVoice) utterance.voice = enVoice;
-
-  utterance.onend = () => setPlayingId(null);
-  utterance.onerror = () => setPlayingId(null);
-
-  window.speechSynthesis.speak(utterance);
+  await speakMessage(coach.sample, {
+    coachAlias: coach.alias,
+    onStart: () => setPlayingId(coach.id),
+    onEnd: () => setPlayingId(null),
+    onError: () => setPlayingId(null),
+  });
 }
 
 export function CoachSelection() {
@@ -160,12 +123,17 @@ export function CoachSelection() {
   const [playingId, setPlayingId] = useState<number | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [profile, setProfile] = useState<any>(null);
+  const [audioStatus, setAudioStatus] = useState(getAudioStatus());
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     setProfile(getProfile());
-    return () => { window.speechSynthesis?.cancel(); };
+    const unsubscribe = subscribeAudioStatus(setAudioStatus);
+    return () => {
+      unsubscribe();
+      stopSpeech();
+    };
   }, []);
 
   const scrollToCard = useCallback((index: number) => {
@@ -218,9 +186,15 @@ export function CoachSelection() {
             <span style={{ fontSize: "11px", letterSpacing: "0.2em", color: selectedCoach.color, fontWeight: 700, fontFamily: "'Archivo', sans-serif" }}>
               ECHORUN
             </span>
-            <div className="px-2 py-0.5 rounded-full" style={{ background: `${selectedCoach.color}18`, border: `1px solid ${selectedCoach.borderColor}`, fontSize: "9px", color: selectedCoach.color, fontWeight: 700, letterSpacing: "0.1em" }}>
-              AI COACH
-            </div>
+            <button
+              onClick={() => setAudioEnabled(!audioStatus.enabled)}
+              className="px-2 py-1 rounded-full flex items-center gap-1.5 active:scale-95"
+              style={{ background: `${selectedCoach.color}18`, border: `1px solid ${selectedCoach.borderColor}`, fontSize: "9px", color: selectedCoach.color, fontWeight: 700, letterSpacing: "0.1em" }}
+              aria-label={audioStatus.enabled ? "Mute voice coach" : "Enable voice coach"}
+            >
+              {audioStatus.enabled ? <Volume2 size={11} /> : <VolumeX size={11} />}
+              {audioStatus.enabled ? "VOICE ON" : "MUTED"}
+            </button>
           </div>
           <h1 style={{ fontSize: "19px", fontWeight: 800, color: "#111827", letterSpacing: "-0.02em", lineHeight: 1.15, fontFamily: "'Archivo Black', sans-serif" }}>
             Choose Your <span style={{ color: selectedCoach.color }}>Running Coach</span>
@@ -327,7 +301,7 @@ export function CoachSelection() {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (isPlaying) {
-                          window.speechSynthesis.cancel();
+                          stopSpeech();
                           setPlayingId(null);
                         } else {
                           playCoachSample(coach, setPlayingId);
@@ -341,7 +315,7 @@ export function CoachSelection() {
                       </motion.div>
                       <WaveformBars isPlaying={isPlaying} color={coach.color} />
                       <span style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em" }}>
-                        {isPlaying ? "PLAYING..." : "LISTEN TO SAMPLE"}
+                        {isPlaying ? "PLAYING..." : audioStatus.enabled ? "LISTEN TO SAMPLE" : "VOICE MUTED"}
                       </span>
                     </button>
                   </div>

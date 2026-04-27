@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Pause, Play, Square, Trophy } from "lucide-react";
+import { Pause, Play, Square, Trophy, Volume2, VolumeX } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { calculateRunPoints } from "../../utils/scoring.js";
 import { evaluateBadges, ALL_BADGES } from "../../utils/badges.js";
 import { updateProfileAfterRun, getProfile } from "../../utils/profile.js";
 import { saveRunRecord } from "../../utils/storage.js";
-import { getCoachMessage, resetCoachSession, speakMessage } from "../../utils/coachMessages.js";
+import { getCoachMessage, resetCoachSession } from "../../utils/coachMessages.js";
+import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 import { LiveRunMap } from "./LiveRunMap";
 
 type LngLatTuple = [number, number];
@@ -243,6 +244,7 @@ export function GhostRunTracking() {
   const [userTrack, setUserTrack] = useState<LngLatTuple[]>([]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [distanceSeries, setDistanceSeries] = useState<DistancePoint[]>([{ t: 0, d: 0 }]);
+  const [audioStatus, setAudioStatus] = useState(getAudioStatus());
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const milestoneRef = useRef({ m500: false, m1k: false, m2k: false, t5: false, t10: false });
@@ -258,13 +260,26 @@ export function GhostRunTracking() {
   const fmtDist = (meters: number) => (meters >= 1000 ? `${(meters / 1000).toFixed(2)}km` : `${Math.round(meters)}m`);
   const fmtPace = (seconds: number) => (seconds > 0 ? `${Math.floor(seconds / 60)}'${String(Math.floor(seconds % 60)).padStart(2, "0")}"` : "--'--\"");
 
+  useEffect(() => {
+    const unsubscribe = subscribeAudioStatus(setAudioStatus);
+    return () => {
+      unsubscribe();
+      stopSpeech();
+    };
+  }, []);
+
+  const announceCoach = useCallback((message: string, soundEffect?: string) => {
+    setCoachMsg(message);
+    if (soundEffect) playSoundEffect(soundEffect);
+    speakMessage(message, { coachAlias });
+  }, [coachAlias]);
+
   const triggerMsg = useCallback((event: string) => {
     const msg = getCoachMessage(coachAlias, event);
     if (msg) {
-      setCoachMsg(msg);
-      speakMessage(msg);
+      announceCoach(msg);
     }
-  }, [coachAlias]);
+  }, [announceCoach, coachAlias]);
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -368,18 +383,23 @@ export function GhostRunTracking() {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
-    setCoachMsg(currentPosition ? (isGhostMode ? "Ghost run started. Let's go." : "Run started. GPS tracking is live.") : "Waiting for GPS fix. Hold still for a moment.");
+    announceCoach(
+      currentPosition ? (isGhostMode ? "Ghost run started. Let's go." : "Run started. GPS tracking is live.") : "Waiting for GPS fix. Hold still for a moment.",
+      "start",
+    );
   };
 
   const handlePause = () => {
     stopTimers();
     setPhase("paused");
+    announceCoach("Run paused. Hold your position and resume when ready.", "pause");
   };
 
   const handleResume = () => {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
+    announceCoach("Run resumed. Settle back into your pace.", "resume");
   };
 
   const handleStop = () => {
@@ -394,6 +414,15 @@ export function GhostRunTracking() {
       const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });
       updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
       setResult({ outcome, finalGap: gap, pointsEarned, newBadges });
+      playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
+      speakMessage(
+        outcome === "win"
+          ? `Ghost defeated. You earned ${pointsEarned} points.`
+          : outcome === "lose"
+            ? `Run complete. The ghost won this time. You earned ${pointsEarned} points.`
+            : `Run complete. It was almost a tie. You earned ${pointsEarned} points.`,
+        { coachAlias },
+      );
       return;
     }
 
@@ -402,6 +431,8 @@ export function GhostRunTracking() {
     const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });
     updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
     setStandardResult({ pointsEarned, newBadges });
+    playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
+    speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias });
   };
 
   const handleSave = () => {
@@ -443,9 +474,22 @@ export function GhostRunTracking() {
               {isGhostMode ? "Ghost Run" : "Standard Run"}
             </h1>
           </div>
-          <div className="flex flex-shrink-0 items-center gap-2 px-3 py-1.5 rounded-full" style={{ background: `${coachColor}12`, border: `1px solid ${coachColor}30` }}>
-            <span style={{ fontSize: "14px" }}>{coachEmoji}</span>
-            <span style={{ fontSize: "10px", color: coachColor, fontWeight: 700, letterSpacing: "0.08em" }}>{coachAlias}</span>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <button
+              onClick={() => setAudioEnabled(!audioStatus.enabled)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full active:scale-95"
+              style={{ background: audioStatus.enabled ? `${coachColor}12` : "#F3F4F6", border: `1px solid ${audioStatus.enabled ? `${coachColor}30` : "#E5E7EB"}` }}
+              aria-label={audioStatus.enabled ? "Mute voice coach" : "Enable voice coach"}
+            >
+              {audioStatus.enabled ? <Volume2 size={12} color={coachColor} /> : <VolumeX size={12} color="#9CA3AF" />}
+              <span style={{ fontSize: "9px", color: audioStatus.enabled ? coachColor : "#9CA3AF", fontWeight: 700, letterSpacing: "0.08em" }}>
+                {audioStatus.enabled ? "ON" : "OFF"}
+              </span>
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full" style={{ background: `${coachColor}12`, border: `1px solid ${coachColor}30` }}>
+              <span style={{ fontSize: "14px" }}>{coachEmoji}</span>
+              <span style={{ fontSize: "10px", color: coachColor, fontWeight: 700, letterSpacing: "0.08em" }}>{coachAlias}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -482,6 +526,12 @@ export function GhostRunTracking() {
       {locationStatus && phase !== "done" && (
         <div className="flex-shrink-0 mx-4 mb-2 px-3 py-2 rounded-xl" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
           <div style={{ fontSize: "11px", color: "#92400E", fontWeight: 600, lineHeight: 1.4 }}>{locationStatus}</div>
+        </div>
+      )}
+
+      {audioStatus.lastError && phase !== "done" && (
+        <div className="flex-shrink-0 mx-4 mb-2 px-3 py-2 rounded-xl" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
+          <div style={{ fontSize: "11px", color: "#B91C1C", fontWeight: 600, lineHeight: 1.4 }}>{audioStatus.lastError}</div>
         </div>
       )}
 
