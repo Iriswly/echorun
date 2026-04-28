@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { motion } from "motion/react";
 import { Activity, ArrowRight, Bot, Ghost, Trophy } from "lucide-react";
+import { pickRandomTheme } from "../../utils/theme";
 
 type LandingScreenProps = {
   onContinue: () => void;
@@ -69,6 +71,8 @@ function FloatingOrbs() {
 }
 
 export function LandingScreen({ onContinue }: LandingScreenProps) {
+  const theme = useMemo(() => pickRandomTheme(), []);
+
   return (
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden" style={{ background: "#F7F8FA" }}>
       {/* Background gradient layers */}
@@ -86,24 +90,24 @@ export function LandingScreen({ onContinue }: LandingScreenProps) {
       <motion.div
         animate={{ y: [0, -8, 0], scale: [1, 1.02, 1] }}
         transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute left-1/2 top-[30%] flex h-44 w-44 -translate-x-1/2 items-center justify-center rounded-full"
+        className="absolute left-1/2 top-[26%] flex h-36 w-36 -translate-x-1/2 items-center justify-center rounded-full sm:h-44 sm:w-44 sm:top-[30%]"
         style={{
-          background: "linear-gradient(145deg, #EF4444, #DC2626)",
-          boxShadow: "0 30px 70px rgba(239,68,68,0.35)",
+          background: `linear-gradient(145deg, ${theme.color}, ${theme.secondaryColor})`,
+          boxShadow: `0 30px 70px ${theme.glowColor}`,
         }}
       >
         <Activity size={56} color="#FFFFFF" strokeWidth={2.4} />
         {/* Pulse ring effect */}
         <motion.div
           className="absolute inset-0 rounded-full"
-          style={{ border: "3px solid rgba(239,68,68,0.35)" }}
+          style={{ border: `3px solid ${theme.glowColor}` }}
           animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
           transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
         />
         {/* Second pulse ring */}
         <motion.div
           className="absolute inset-0 rounded-full"
-          style={{ border: "2px solid rgba(239,68,68,0.2)" }}
+          style={{ border: `2px solid ${theme.glowColor}` }}
           animate={{ scale: [1, 1.35, 1], opacity: [0.3, 0, 0.3] }}
           transition={{ duration: 2, repeat: Infinity, ease: "easeOut", delay: 0.5 }}
         />
@@ -112,19 +116,19 @@ export function LandingScreen({ onContinue }: LandingScreenProps) {
       <div className="relative z-10 flex flex-1 flex-col px-6 pb-7 pt-10">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div style={{ color: "#EF4444", fontSize: "11px", fontWeight: 700, letterSpacing: "0.2em", fontFamily: "'Archivo', sans-serif" }}>
+          <div style={{ color: theme.color, fontSize: "11px", fontWeight: 700, letterSpacing: "0.2em", fontFamily: "'Archivo', sans-serif" }}>
             ECHORUN
           </div>
           <div
             className="rounded-full px-3 py-1"
-            style={{ color: "#EF4444", background: "rgba(239,68,68,0.1)", border: "1px solid #FCA5A5", fontSize: "9px", fontWeight: 700, letterSpacing: "0.1em" }}
+            style={{ color: theme.color, background: theme.glowColor, border: `1px solid ${theme.borderColor}`, fontSize: "9px", fontWeight: 700, letterSpacing: "0.1em" }}
           >
             AI RUN COACH
           </div>
         </div>
 
         {/* Main content */}
-        <div className="mt-auto">
+        <div className="mt-4 sm:mt-auto">
           <motion.div 
             initial={{ opacity: 0, y: 16 }} 
             animate={{ opacity: 1, y: 0 }} 
@@ -143,7 +147,7 @@ export function LandingScreen({ onContinue }: LandingScreenProps) {
             >
               Race your past.
               <br />
-              Train with <span style={{ color: "#EF4444" }}>voice</span>.
+              Train with <span style={{ color: theme.color }}>voice</span>.
             </h1>
             <p className="mt-4" style={{ color: "#6B7280", fontSize: "14px", lineHeight: 1.6 }}>
               Choose a coach, run live, challenge ghost records, and build XP through every session.
@@ -155,7 +159,7 @@ export function LandingScreen({ onContinue }: LandingScreenProps) {
             initial={{ opacity: 0, y: 12 }} 
             animate={{ opacity: 1, y: 0 }} 
             transition={{ duration: 0.4, delay: 0.1 }}
-            className="mt-6 grid grid-cols-3 gap-2"
+            className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-3"
           >
             {[
               { icon: Bot, label: "AI Coach", color: "#14B8A6", bgColor: "rgba(20,184,166,0.12)", borderColor: "#99F6E4" },
@@ -190,10 +194,10 @@ export function LandingScreen({ onContinue }: LandingScreenProps) {
             onClick={onContinue}
             className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl py-4 active:scale-95"
             style={{
-              background: "#EF4444",
+              background: theme.color,
               color: "#FFFFFF",
               border: "none",
-              boxShadow: "0 6px 20px rgba(239,68,68,0.35)",
+              boxShadow: `0 6px 20px ${theme.glowColor}`,
             }}
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
@@ -213,7 +217,7 @@ export function LandingScreen({ onContinue }: LandingScreenProps) {
           <button
             onClick={onContinue}
             className="mt-3 w-full py-2"
-            style={{ color: "#6B7280", fontSize: "12px", fontWeight: 600 }}
+            style={{ color: theme.secondaryColor, fontSize: "12px", fontWeight: 600 }}
           >
             I already have an account
           </button>

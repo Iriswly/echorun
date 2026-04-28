@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { motion } from "motion/react";
 import { Activity, Lock, Mail, Radio, Shield, User, LogIn, UserPlus } from "lucide-react";
 import { loginAccount, registerAccount } from "../../utils/auth.js";
+import { pickRandomTheme } from "../../utils/theme";
 
 type AuthScreenProps = {
   onAuthenticated: () => void;
 };
 
 export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+  const theme = useMemo(() => pickRandomTheme(), []);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -35,10 +37,10 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
   return (
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden" style={{ background: "#F7F8FA" }}>
-      <div className="relative z-10 flex flex-1 flex-col px-6 pb-6">
+      <div className="relative z-10 flex flex-1 min-h-0 flex-col overflow-y-auto px-6 pb-6" style={{ WebkitOverflowScrolling: "touch" }}>
         {/* Header */}
         <div className="flex items-center justify-between pt-8 pb-6">
-          <div style={{ color: "#EF4444", fontSize: "11px", fontWeight: 700, letterSpacing: "0.2em", fontFamily: "'Archivo', sans-serif" }}>
+          <div style={{ color: theme.color, fontSize: "11px", fontWeight: 700, letterSpacing: "0.2em", fontFamily: "'Archivo', sans-serif" }}>
             ECHORUN
           </div>
           <div
@@ -63,8 +65,8 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
             className="flex h-20 w-20 items-center justify-center rounded-full mb-4"
             style={{
-              background: "linear-gradient(145deg, #EF4444, #DC2626)",
-              boxShadow: "0 16px 40px rgba(239,68,68,0.28)",
+              background: `linear-gradient(145deg, ${theme.color}, ${theme.secondaryColor})`,
+              boxShadow: `0 16px 40px ${theme.glowColor}`,
             }}
           >
             <Activity size={32} color="#FFFFFF" strokeWidth={2.6} />
@@ -73,12 +75,12 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           <div
             className="inline-flex items-center gap-2 rounded-full px-3 py-1.5"
             style={{
-              background: "rgba(239,68,68,0.1)",
-              border: "1px solid #FCA5A5",
-              color: "#EF4444",
+              background: `${theme.glowColor}`,
+              border: `1px solid ${theme.borderColor}`,
+              color: theme.color,
             }}
           >
-            <Activity size={14} color="#EF4444" />
+            <Activity size={14} color={theme.color} />
             <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.1em" }}>RUN PROFILE SYNC</span>
           </div>
         </div>
@@ -132,7 +134,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.08 }}
-          className="mt-auto rounded-2xl p-5"
+          className="mt-4 rounded-2xl p-5"
           style={{
             background: "#FFFFFF",
             border: "1px solid #E5E7EB",
@@ -156,12 +158,12 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                   }}
                   className="flex-1 rounded-lg py-2.5 transition-all active:scale-95"
                   style={{
-                    background: active ? "#EF4444" : "transparent",
+                    background: active ? theme.color : "transparent",
                     color: active ? "#FFFFFF" : "#6B7280",
                     fontSize: "12px",
                     fontWeight: 700,
                     letterSpacing: "0.06em",
-                    boxShadow: active ? "0 4px 12px rgba(239,68,68,0.25)" : "none",
+                    boxShadow: active ? `0 4px 12px ${theme.glowColor}` : "none",
                   }}
                 >
                   {item.label}
@@ -247,10 +249,10 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
               type="submit"
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 active:scale-95"
               style={{
-                background: "#EF4444",
+                background: theme.color,
                 color: "#FFFFFF",
                 border: "none",
-                boxShadow: "0 4px 16px rgba(239,68,68,0.3)",
+                boxShadow: `0 4px 16px ${theme.glowColor}`,
               }}
             >
               {isRegister ? <UserPlus size={17} /> : <LogIn size={17} />}
@@ -265,7 +267,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             className="mt-4 rounded-xl p-3"
             style={{ background: "#F9FAFB", border: "1px solid #E5E7EB" }}
           >
-            <div style={{ fontSize: "10px", color: "#EF4444", fontWeight: 700, letterSpacing: "0.1em", marginBottom: "4px" }}>
+            <div style={{ fontSize: "10px", color: theme.color, fontWeight: 700, letterSpacing: "0.1em", marginBottom: "4px" }}>
               DEMO ACCESS
             </div>
             <div style={{ fontSize: "11px", color: "#6B7280", lineHeight: 1.55 }}>
