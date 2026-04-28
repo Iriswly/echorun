@@ -427,13 +427,13 @@ export function LiveRunMap({
   }
 
   return (
-    <div className="absolute inset-0">
-      <div ref={containerRef} className="absolute inset-0" style={{ width: "100%", height: "100%", minHeight: "240px", zIndex: 0 }} />
-      <div className="absolute top-3 right-3 px-3 py-1.5 rounded-full flex items-center gap-1.5" style={{ background: "rgba(255,255,255,0.92)", border: `1.5px solid ${deltaColor}40`, backdropFilter: "blur(4px)" }}>
+    <div className="absolute inset-0 min-w-0 overflow-hidden">
+      <div ref={containerRef} className="absolute inset-0" style={{ width: "100%", height: "100%", minHeight: "100%", maxWidth: "100%", zIndex: 0 }} />
+      <div className="absolute top-3 right-3 max-w-[calc(100%-24px)] px-3 py-1.5 rounded-full flex flex-wrap items-center gap-1.5" style={{ background: "rgba(255,255,255,0.92)", border: `1.5px solid ${deltaColor}40`, backdropFilter: "blur(4px)" }}>
         <div className="w-2 h-2 rounded-full" style={{ background: deltaColor }} />
         <span style={{ fontSize: "12px", fontWeight: 800, color: deltaColor, fontFamily: "'Archivo Black', sans-serif", letterSpacing: "-0.01em" }}>{deltaLabel}</span>
       </div>
-      <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full" style={{ background: "rgba(255,255,255,0.9)", border: "1px solid #E5E7EB", fontSize: "8px", color: "#6B7280", fontWeight: 700, letterSpacing: "0.12em" }}>
+      <div className="absolute top-3 left-3 max-w-[calc(100%-24px)] px-2.5 py-1 rounded-full" style={{ background: "rgba(255,255,255,0.9)", border: "1px solid #E5E7EB", fontSize: "8px", color: "#6B7280", fontWeight: 700, letterSpacing: "0.12em" }}>
         {isGhostMode ? "GHOST MODE" : "LIVE GPS"}
       </div>
       <div className="absolute left-3 bottom-3 max-w-[calc(100%-24px)] px-3 py-2 rounded-xl" style={{ background: "rgba(255,255,255,0.95)", border: "1px solid #E5E7EB", color: "#334155", fontSize: "11px", lineHeight: 1.45 }}>

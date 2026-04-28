@@ -1,4 +1,5 @@
 import { getLevelInfo } from "./scoring.js";
+import { getStorageKey } from "./auth.js";
 
 const KEY = "ECHORUN_PROFILE";
 
@@ -14,7 +15,7 @@ const DEFAULT_PROFILE = {
 
 export function getProfile() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(getStorageKey(KEY));
     return raw ? { ...DEFAULT_PROFILE, ...JSON.parse(raw) } : { ...DEFAULT_PROFILE };
   } catch {
     return { ...DEFAULT_PROFILE };
@@ -22,7 +23,7 @@ export function getProfile() {
 }
 
 export function saveProfile(profile) {
-  localStorage.setItem(KEY, JSON.stringify(profile));
+  localStorage.setItem(getStorageKey(KEY), JSON.stringify(profile));
 }
 
 export function updateProfileAfterRun(runResult, newBadges) {

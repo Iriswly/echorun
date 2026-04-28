@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Pause, Play, Square, Trophy } from "lucide-react";
+import { Pause, Play, Square, Trophy, Volume2, VolumeX } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { calculateRunPoints } from "../../utils/scoring.js";
 import { evaluateBadges, ALL_BADGES } from "../../utils/badges.js";
 import { updateProfileAfterRun, getProfile } from "../../utils/profile.js";
 import { saveRunRecord } from "../../utils/storage.js";
-import { getCoachMessage, resetCoachSession, speakMessage } from "../../utils/coachMessages.js";
+import { getCoachMessage, resetCoachSession } from "../../utils/coachMessages.js";
+import { getStorageKey } from "../../utils/auth.js";
+import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 import { LiveRunMap } from "./LiveRunMap";
 
 type LngLatTuple = [number, number];
@@ -95,7 +97,7 @@ function ResultCard({
   const badgeObjs = newBadges.map((id) => ALL_BADGES.find((badge) => badge.id === id)).filter(Boolean);
 
   return (
-    <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="absolute inset-0 z-30 flex flex-col items-center justify-center px-5" style={{ background: "rgba(247,248,250,0.97)" }}>
+    <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="absolute inset-0 z-30 flex flex-col items-center justify-center overflow-y-auto px-4 sm:px-5" style={{ background: "rgba(247,248,250,0.97)", paddingTop: "24px", paddingBottom: "24px" }}>
       <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 20 }} className="text-5xl mb-3">
         {cfg.emoji}
       </motion.div>
@@ -104,7 +106,7 @@ function ResultCard({
       </div>
       <div style={{ fontSize: "13px", color: "#6B7280", marginBottom: "20px" }}>{gapLabel}</div>
 
-      <div className="w-full rounded-2xl p-4 mb-4" style={{ background: cfg.bg, border: `1.5px solid ${cfg.border}` }}>
+      <div className="w-full rounded-2xl p-4 mb-4" style={{ background: cfg.bg, border: `1.5px solid ${cfg.border}`, maxWidth: "100%" }}>
         <div className="flex items-center justify-between mb-3">
           <span style={{ fontSize: "11px", color: cfg.color, fontWeight: 700, letterSpacing: "0.1em" }}>POINTS EARNED</span>
           <span style={{ fontSize: "28px", fontWeight: 900, color: cfg.color, fontFamily: "'Archivo Black', sans-serif" }}>+{pointsEarned}</span>
@@ -167,12 +169,12 @@ function StandardResultCard({
   const badgeObjs = newBadges.map((id) => ALL_BADGES.find((badge) => badge.id === id)).filter(Boolean);
 
   return (
-    <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="absolute inset-0 z-30 flex flex-col items-center justify-center px-5" style={{ background: "rgba(247,248,250,0.97)" }}>
+    <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="absolute inset-0 z-30 flex flex-col items-center justify-center overflow-y-auto px-4 sm:px-5" style={{ background: "rgba(247,248,250,0.97)", paddingTop: "24px", paddingBottom: "24px" }}>
       <div className="text-5xl mb-3">R</div>
       <div style={{ fontSize: "22px", fontWeight: 800, color: "#2563EB", fontFamily: "'Archivo Black', sans-serif", letterSpacing: "-0.02em", marginBottom: "16px" }}>
         Run Complete!
       </div>
-      <div className="w-full rounded-2xl p-4 mb-4" style={{ background: "#EFF6FF", border: "1.5px solid #BFDBFE" }}>
+      <div className="w-full rounded-2xl p-4 mb-4" style={{ background: "#EFF6FF", border: "1.5px solid #BFDBFE", maxWidth: "100%" }}>
         <div className="grid grid-cols-3 gap-3 mb-3">
           {[
             { label: "DIST", value: `${(distance / 1000).toFixed(2)}km` },
@@ -223,7 +225,7 @@ export function GhostRunTracking() {
 
   const storedCoach = (() => {
     try {
-      return JSON.parse(localStorage.getItem("ECHORUN_COACH") || "{}");
+      return JSON.parse(localStorage.getItem(getStorageKey("ECHORUN_COACH")) || "{}");
     } catch {
       return {};
     }
@@ -243,6 +245,7 @@ export function GhostRunTracking() {
   const [userTrack, setUserTrack] = useState<LngLatTuple[]>([]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [distanceSeries, setDistanceSeries] = useState<DistancePoint[]>([{ t: 0, d: 0 }]);
+  const [audioStatus, setAudioStatus] = useState(getAudioStatus());
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const milestoneRef = useRef({ m500: false, m1k: false, m2k: false, t5: false, t10: false });
@@ -258,13 +261,26 @@ export function GhostRunTracking() {
   const fmtDist = (meters: number) => (meters >= 1000 ? `${(meters / 1000).toFixed(2)}km` : `${Math.round(meters)}m`);
   const fmtPace = (seconds: number) => (seconds > 0 ? `${Math.floor(seconds / 60)}'${String(Math.floor(seconds % 60)).padStart(2, "0")}"` : "--'--\"");
 
+  useEffect(() => {
+    const unsubscribe = subscribeAudioStatus(setAudioStatus);
+    return () => {
+      unsubscribe();
+      stopSpeech();
+    };
+  }, []);
+
+  const announceCoach = useCallback((message: string, soundEffect?: string) => {
+    setCoachMsg(message);
+    if (soundEffect) playSoundEffect(soundEffect);
+    speakMessage(message, { coachAlias });
+  }, [coachAlias]);
+
   const triggerMsg = useCallback((event: string) => {
     const msg = getCoachMessage(coachAlias, event);
     if (msg) {
-      setCoachMsg(msg);
-      speakMessage(msg);
+      announceCoach(msg);
     }
-  }, [coachAlias]);
+  }, [announceCoach, coachAlias]);
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -368,18 +384,23 @@ export function GhostRunTracking() {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
-    setCoachMsg(currentPosition ? (isGhostMode ? "Ghost run started. Let's go." : "Run started. GPS tracking is live.") : "Waiting for GPS fix. Hold still for a moment.");
+    announceCoach(
+      currentPosition ? (isGhostMode ? "Ghost run started. Let's go." : "Run started. GPS tracking is live.") : "Waiting for GPS fix. Hold still for a moment.",
+      "start",
+    );
   };
 
   const handlePause = () => {
     stopTimers();
     setPhase("paused");
+    announceCoach("Run paused. Hold your position and resume when ready.", "pause");
   };
 
   const handleResume = () => {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
+    announceCoach("Run resumed. Settle back into your pace.", "resume");
   };
 
   const handleStop = () => {
@@ -394,6 +415,15 @@ export function GhostRunTracking() {
       const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });
       updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
       setResult({ outcome, finalGap: gap, pointsEarned, newBadges });
+      playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
+      speakMessage(
+        outcome === "win"
+          ? `Ghost defeated. You earned ${pointsEarned} points.`
+          : outcome === "lose"
+            ? `Run complete. The ghost won this time. You earned ${pointsEarned} points.`
+            : `Run complete. It was almost a tie. You earned ${pointsEarned} points.`,
+        { coachAlias },
+      );
       return;
     }
 
@@ -402,6 +432,8 @@ export function GhostRunTracking() {
     const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });
     updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
     setStandardResult({ pointsEarned, newBadges });
+    playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
+    speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias });
   };
 
   const handleSave = () => {
@@ -427,7 +459,7 @@ export function GhostRunTracking() {
   const canStart = !locationStatus || phase !== "idle";
 
   return (
-    <div className="relative flex flex-col h-full overflow-hidden" style={{ background: "#F7F8FA" }}>
+    <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background: "#F7F8FA" }}>
       {phase === "done" && isGhostMode && result && (
         <ResultCard result={result.outcome} finalGap={result.finalGap} pointsEarned={result.pointsEarned} newBadges={result.newBadges} coachAlias={coachAlias} coachColor={coachColor} onSave={handleSave} />
       )}
@@ -435,22 +467,35 @@ export function GhostRunTracking() {
         <StandardResultCard distance={distance} elapsed={elapsed} pointsEarned={standardResult.pointsEarned} newBadges={standardResult.newBadges} coachColor={coachColor} onSave={handleSave} />
       )}
 
-      <div className="flex-shrink-0 px-5 pt-10 pb-3 relative z-10" style={{ background: "#FFFFFF", borderBottom: "1px solid #E5E7EB" }}>
-        <div className="flex items-center justify-between">
-          <div>
+      <div className="flex-shrink-0 px-4 sm:px-5 pt-10 pb-3 relative z-10" style={{ background: "#FFFFFF", borderBottom: "1px solid #E5E7EB" }}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div style={{ fontSize: "10px", color: coachColor, fontWeight: 700, letterSpacing: "0.2em", marginBottom: "2px" }}>ECHORUN</div>
             <h1 style={{ fontSize: "22px", fontWeight: 800, color: "#111827", letterSpacing: "-0.02em", lineHeight: 1.1, fontFamily: "'Archivo Black', sans-serif" }}>
               {isGhostMode ? "Ghost Run" : "Standard Run"}
             </h1>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full" style={{ background: `${coachColor}12`, border: `1px solid ${coachColor}30` }}>
-            <span style={{ fontSize: "14px" }}>{coachEmoji}</span>
-            <span style={{ fontSize: "10px", color: coachColor, fontWeight: 700, letterSpacing: "0.08em" }}>{coachAlias}</span>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <button
+              onClick={() => setAudioEnabled(!audioStatus.enabled)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full active:scale-95"
+              style={{ background: audioStatus.enabled ? `${coachColor}12` : "#F3F4F6", border: `1px solid ${audioStatus.enabled ? `${coachColor}30` : "#E5E7EB"}` }}
+              aria-label={audioStatus.enabled ? "Mute voice coach" : "Enable voice coach"}
+            >
+              {audioStatus.enabled ? <Volume2 size={12} color={coachColor} /> : <VolumeX size={12} color="#9CA3AF" />}
+              <span style={{ fontSize: "9px", color: audioStatus.enabled ? coachColor : "#9CA3AF", fontWeight: 700, letterSpacing: "0.08em" }}>
+                {audioStatus.enabled ? "ON" : "OFF"}
+              </span>
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full" style={{ background: `${coachColor}12`, border: `1px solid ${coachColor}30` }}>
+              <span style={{ fontSize: "14px" }}>{coachEmoji}</span>
+              <span style={{ fontSize: "10px", color: coachColor, fontWeight: 700, letterSpacing: "0.08em" }}>{coachAlias}</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="flex-shrink-0 relative" style={{ height: "240px", background: "#EFF6FF" }}>
+      <div className="flex-shrink-0 relative" style={{ height: "clamp(180px, 30dvh, 240px)", background: "#EFF6FF" }}>
         <LiveRunMap
           phase={phase}
           isGhostMode={isGhostMode}
@@ -466,13 +511,13 @@ export function GhostRunTracking() {
         />
       </div>
 
-      <div className="flex-shrink-0 px-4 py-3 grid grid-cols-3 gap-2.5">
+      <div className="flex-shrink-0 px-3 sm:px-4 py-3 grid grid-cols-3 gap-2">
         {[
           { label: "TIME", value: fmtTime(elapsed) },
           { label: "DIST", value: fmtDist(distance) },
           { label: "PACE", value: fmtPace(pace) },
         ].map(({ label, value }) => (
-          <div key={label} className="rounded-xl p-3 text-center" style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
+          <div key={label} className="min-w-0 rounded-xl p-2.5 sm:p-3 text-center" style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
             <div style={{ fontSize: "7px", color: "#9CA3AF", fontWeight: 700, letterSpacing: "0.15em", marginBottom: "3px" }}>{label}</div>
             <div style={{ fontSize: "17px", fontWeight: 900, color: "#111827", fontFamily: "'Archivo Black', sans-serif", letterSpacing: "-0.02em", lineHeight: 1 }}>{value}</div>
           </div>
@@ -482,6 +527,12 @@ export function GhostRunTracking() {
       {locationStatus && phase !== "done" && (
         <div className="flex-shrink-0 mx-4 mb-2 px-3 py-2 rounded-xl" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
           <div style={{ fontSize: "11px", color: "#92400E", fontWeight: 600, lineHeight: 1.4 }}>{locationStatus}</div>
+        </div>
+      )}
+
+      {audioStatus.lastError && phase !== "done" && (
+        <div className="flex-shrink-0 mx-4 mb-2 px-3 py-2 rounded-xl" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
+          <div style={{ fontSize: "11px", color: "#B91C1C", fontWeight: 600, lineHeight: 1.4 }}>{audioStatus.lastError}</div>
         </div>
       )}
 
@@ -508,7 +559,7 @@ export function GhostRunTracking() {
 
       <div className="flex-1" />
 
-      <div className="flex-shrink-0 px-5 pb-5 pt-2">
+      <div className="flex-shrink-0 px-4 sm:px-5 pb-5 pt-2">
         {phase === "idle" && (
           <motion.button whileTap={{ scale: 0.96 }} onClick={handleStart} disabled={!canStart} className="w-full py-5 rounded-xl flex items-center justify-center gap-3" style={{ background: canStart ? coachColor : "#CBD5E1", border: "none", boxShadow: canStart ? `0 4px 16px ${coachColor}40` : "none" }}>
             <Play size={20} color="#fff" fill="#fff" />
@@ -518,7 +569,7 @@ export function GhostRunTracking() {
           </motion.button>
         )}
         {phase === "running" && (
-          <div className="flex gap-3">
+          <div className="flex gap-3 max-[340px]:flex-col">
             <motion.button whileTap={{ scale: 0.95 }} onClick={handlePause} className="flex-1 py-4 rounded-xl flex items-center justify-center gap-2" style={{ background: "#FFFFFF", border: "1.5px solid #E5E7EB" }}>
               <Pause size={18} color="#374151" />
               <span style={{ fontSize: "14px", fontWeight: 700, color: "#374151" }}>Pause</span>
@@ -530,7 +581,7 @@ export function GhostRunTracking() {
           </div>
         )}
         {phase === "paused" && (
-          <div className="flex gap-3">
+          <div className="flex gap-3 max-[340px]:flex-col">
             <motion.button whileTap={{ scale: 0.95 }} onClick={handleResume} className="flex-1 py-4 rounded-xl flex items-center justify-center gap-2" style={{ background: coachColor, border: "none" }}>
               <Play size={18} color="#fff" fill="#fff" />
               <span style={{ fontSize: "14px", fontWeight: 700, color: "#fff" }}>Resume</span>
