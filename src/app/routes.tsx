@@ -6,12 +6,14 @@ import { PostRunDashboard } from "./components/PostRunDashboard";
 import { AuthScreen } from "./components/AuthScreen";
 import { LandingScreen } from "./components/LandingScreen";
 import { getCurrentUser } from "../utils/auth.js";
+import { pickRandomTheme } from "../utils/theme";
 import { Zap, Radio, Trophy } from "lucide-react";
 
 function Root() {
   const navigate = useNavigate();
   const location = useLocation();
   const [currentUser, setCurrentUser] = useState(getCurrentUser());
+  const [theme] = useState(() => pickRandomTheme());
   const [showAuth, setShowAuth] = useState(false);
 
   useEffect(() => {
@@ -51,9 +53,9 @@ function Root() {
 
         {!currentUser ? (
           showAuth ? (
-            <AuthScreen onAuthenticated={() => setCurrentUser(getCurrentUser())} />
+            <AuthScreen theme={theme} onAuthenticated={() => setCurrentUser(getCurrentUser())} />
           ) : (
-            <LandingScreen onContinue={() => setShowAuth(true)} />
+            <LandingScreen theme={theme} onContinue={() => setShowAuth(true)} />
           )
         ) : (
           <>

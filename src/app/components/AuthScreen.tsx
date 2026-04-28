@@ -1,16 +1,16 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 import { motion } from "motion/react";
 import { Activity, Lock, Mail, Radio, Shield, User, LogIn, UserPlus } from "lucide-react";
 import { loginAccount, registerAccount } from "../../utils/auth.js";
-import { pickRandomTheme } from "../../utils/theme";
+import type { ThemePalette } from "../../utils/theme";
 
 type AuthScreenProps = {
+  theme: ThemePalette;
   onAuthenticated: () => void;
 };
 
-export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
-  const theme = useMemo(() => pickRandomTheme(), []);
+export function AuthScreen({ theme, onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");

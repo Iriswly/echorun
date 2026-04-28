@@ -1,9 +1,9 @@
-import { useMemo } from "react";
 import { motion } from "motion/react";
 import { Activity, ArrowRight, Bot, Ghost, Trophy } from "lucide-react";
-import { pickRandomTheme } from "../../utils/theme";
+import type { ThemePalette } from "../../utils/theme";
 
 type LandingScreenProps = {
+  theme: ThemePalette;
   onContinue: () => void;
 };
 
@@ -70,9 +70,7 @@ function FloatingOrbs() {
   );
 }
 
-export function LandingScreen({ onContinue }: LandingScreenProps) {
-  const theme = useMemo(() => pickRandomTheme(), []);
-
+export function LandingScreen({ theme, onContinue }: LandingScreenProps) {
   return (
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden" style={{ background: "#F7F8FA" }}>
       {/* Background gradient layers */}
