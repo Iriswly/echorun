@@ -125,6 +125,7 @@ export function CoachSelection() {
   const [confirmed, setConfirmed] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [audioStatus, setAudioStatus] = useState(getAudioStatus());
+  const [isScrollingProgrammatically, setIsScrollingProgrammatically] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -139,12 +140,18 @@ export function CoachSelection() {
 
   const scrollToCard = useCallback((index: number) => {
     if (!scrollRef.current) return;
-    const firstCard = scrollRef.current.firstElementChild as HTMLElement | null;
-    const cardWidth = (firstCard?.getBoundingClientRect().width ?? 280) + 16;
-    const containerWidth = scrollRef.current.offsetWidth;
-    const visibleCardWidth = firstCard?.getBoundingClientRect().width ?? Math.min(280, containerWidth - 48);
-    const offset = index * cardWidth - (containerWidth - visibleCardWidth) / 2;
-    scrollRef.current.scrollTo({ left: offset, behavior: "smooth" });
+    const card = scrollRef.current.children[index] as HTMLElement | null;
+    if (!card) return;
+
+    const containerWidth = scrollRef.current.clientWidth;
+    const cardLeft = card.offsetLeft;
+    const cardWidth = card.offsetWidth;
+    const targetLeft = cardLeft - (containerWidth - cardWidth) / 2;
+    const maxScrollLeft = Math.max(0, scrollRef.current.scrollWidth - containerWidth);
+
+    setIsScrollingProgrammatically(true);
+    scrollRef.current.scrollTo({ left: Math.min(Math.max(0, targetLeft), maxScrollLeft), behavior: "smooth" });
+    setTimeout(() => setIsScrollingProgrammatically(false), 600);
     setSelectedIdx(index);
   }, []);
 
@@ -153,12 +160,24 @@ export function CoachSelection() {
   }, [scrollToCard]);
 
   const handleScroll = () => {
-    if (!scrollRef.current) return;
-    const firstCard = scrollRef.current.firstElementChild as HTMLElement | null;
-    const cardWidth = (firstCard?.getBoundingClientRect().width ?? 280) + 16;
-    const scrollLeft = scrollRef.current.scrollLeft;
-    const clampedIndex = Math.max(0, Math.min(coaches.length - 1, Math.round(scrollLeft / cardWidth)));
-    setSelectedIdx(clampedIndex);
+    if (!scrollRef.current || isScrollingProgrammatically) return;
+
+    const containerRect = scrollRef.current.getBoundingClientRect();
+    const containerCenter = containerRect.left + containerRect.width / 2;
+    let closestIndex = 0;
+    let minDistance = Infinity;
+
+    Array.from(scrollRef.current.children).forEach((child, idx) => {
+      const childRect = (child as HTMLElement).getBoundingClientRect();
+      const childCenter = childRect.left + childRect.width / 2;
+      const distance = Math.abs(childCenter - containerCenter);
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = idx;
+      }
+    });
+
+    setSelectedIdx(closestIndex);
   };
 
   const selectedCoach = coaches[selectedIdx];

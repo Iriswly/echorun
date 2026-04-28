@@ -50,6 +50,16 @@ function getRunSourceLabel(run: any) {
   return "RUN";
 }
 
+function getInitials(name: string) {
+  return String(name)
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 function ResultPill({ result }: { result: "win"|"lose"|"tie" }) {
   const cfg = {
     win:  { label:"WIN",  bg:"#F0FDF4", border:"#6EE7B7", color:"#10B981" },
@@ -112,8 +122,12 @@ export function PostRunDashboard() {
             )}
           </div>
           {profile && levelInfo && (
-            <div className="flex flex-col items-end gap-1 min-w-0">
-              <div className="flex items-center gap-1.5">
+            <div className="flex flex-col items-end gap-2 min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white"
+                  style={{ background: "#2563EB", boxShadow: "0 10px 22px rgba(37,99,235,0.22)" }}>
+                  {getInitials(user?.name || "YOU")}
+                </div>
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
                   <Trophy size={10} color="#2563EB" />
                   <span style={{ fontSize:"10px", color:"#2563EB", fontWeight:700, letterSpacing:"0.05em" }}>
@@ -212,12 +226,17 @@ export function PostRunDashboard() {
                       exit={{ opacity:0, x:20, height:0 }}
                       transition={{ delay: idx * 0.05, duration:0.3 }}
                       className="p-4 rounded-xl"
-                      style={{ background:"#FFFFFF", border:"1px solid #E5E7EB", boxShadow:"0 2px 8px rgba(15,23,42,0.06)" }}>
+                      style={{
+                        background: run.source === "friend" ? "#F8F5FF" : "#FFFFFF",
+                        border: run.source === "friend" ? "1px solid #D8B4FE" : "1px solid #E5E7EB",
+                        boxShadow: run.source === "friend" ? "0 4px 18px rgba(124,58,237,0.08)" : "0 2px 8px rgba(15,23,42,0.06)",
+                        borderLeft: run.source === "friend" ? "6px solid #7C3AED" : "6px solid #2563EB",
+                      }}>
 
                       {/* Top row */}
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="min-w-0">
-                          <div style={{ fontSize:"8px", color:"#9CA3AF", fontWeight:700, letterSpacing:"0.14em", marginBottom:"4px" }}>
+                          <div style={{ fontSize:"8px", color: run.source === "friend" ? "#7C3AED" : "#2563EB", fontWeight:700, letterSpacing:"0.14em", marginBottom:"4px" }}>
                             {getRunSourceLabel(run)}
                           </div>
                           {run.title && (

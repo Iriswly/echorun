@@ -1,12 +1,32 @@
 const USERS_KEY = "ECHORUN_USERS";
 const CURRENT_USER_KEY = "ECHORUN_CURRENT_USER";
+const TEST_ACCOUNT = {
+  id: "user_test_demo",
+  name: "Test User",
+  email: "test@echorun.local",
+  password: encodePassword("test123"),
+  createdAt: "2026-04-28T00:00:00.000Z",
+};
+
+function ensureTestAccount(users) {
+  const baseUsers = Array.isArray(users) ? users : [];
+  const hasTestAccount = baseUsers.some((user) => normalizeEmail(user?.email) === TEST_ACCOUNT.email);
+
+  if (hasTestAccount) {
+    return baseUsers;
+  }
+
+  const nextUsers = [...baseUsers, TEST_ACCOUNT];
+  localStorage.setItem(USERS_KEY, JSON.stringify(nextUsers));
+  return nextUsers;
+}
 
 function readUsers() {
   try {
     const raw = localStorage.getItem(USERS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return ensureTestAccount(raw ? JSON.parse(raw) : []);
   } catch {
-    return [];
+    return ensureTestAccount([]);
   }
 }
 
