@@ -9,7 +9,7 @@ type LandingScreenProps = {
 
 function RunningPath() {
   return (
-    <svg className="absolute left-0 right-0 top-1/4 opacity-[0.04]" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid slice">
+    <svg className="absolute left-0 right-0 top-[30%] opacity-[0.04]" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid slice">
       <motion.path
         d="M 20 180 Q 60 140 100 160 T 180 120 T 260 140 T 300 100"
         fill="none"
@@ -48,8 +48,8 @@ function FloatingOrbs() {
           width: "40px",
           height: "40px",
           background: "radial-gradient(circle, rgba(20,184,166,0.12) 0%, transparent 70%)",
-          top: "45%",
-          right: "15%",
+          top: "50%",
+          right: "10%",
         }}
         animate={{ y: [0, -15, 0], x: [0, 10, 0], opacity: [0.2, 0.5, 0.2] }}
         transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
@@ -60,8 +60,8 @@ function FloatingOrbs() {
           width: "50px",
           height: "50px",
           background: "radial-gradient(circle, rgba(249,115,22,0.1) 0%, transparent 70%)",
-          bottom: "35%",
-          left: "20%",
+          bottom: "40%",
+          left: "15%",
         }}
         animate={{ y: [0, -18, 0], opacity: [0.25, 0.55, 0.25] }}
         transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
@@ -72,10 +72,10 @@ function FloatingOrbs() {
 
 export function LandingScreen({ theme, onContinue }: LandingScreenProps) {
   return (
-    <div className="relative flex h-full min-w-0 flex-col overflow-hidden" style={{ background: "#F7F8FA" }}>
+    <div className="relative h-screen min-h-[600px] w-full flex flex-col overflow-hidden" style={{ background: "#F7F8FA" }}>
       {/* Background gradient layers */}
       <div className="absolute inset-0" style={{
-        background: "radial-gradient(ellipse at 50% 10%, rgba(239,68,68,0.06) 0%, transparent 50%), radial-gradient(ellipse at 80% 60%, rgba(20,184,166,0.04) 0%, transparent 40%)"
+        background: "radial-gradient(ellipse at 50% 8%, rgba(239,68,68,0.06) 0%, transparent 50%), radial-gradient(ellipse at 80% 60%, rgba(20,184,166,0.04) 0%, transparent 40%)"
       }} />
       
       {/* Decorative running path */}
@@ -84,36 +84,41 @@ export function LandingScreen({ theme, onContinue }: LandingScreenProps) {
       {/* Floating orbs */}
       <FloatingOrbs />
 
-      {/* Animated logo icon - centered and enlarged */}
-      <motion.div
-        animate={{ y: [0, -8, 0], scale: [1, 1.02, 1] }}
-        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute left-1/2 top-[26%] flex h-36 w-36 -translate-x-1/2 items-center justify-center rounded-full sm:h-44 sm:w-44 sm:top-[30%]"
-        style={{
-          background: `linear-gradient(145deg, ${theme.color}, ${theme.secondaryColor})`,
-          boxShadow: `0 30px 70px ${theme.glowColor}`,
-        }}
-      >
-        <Activity size={56} color="#FFFFFF" strokeWidth={2.4} />
-        {/* Pulse ring effect */}
+      {/* Animated logo icon - centered */}
+      <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2">
         <motion.div
-          className="absolute inset-0 rounded-full"
-          style={{ border: `3px solid ${theme.glowColor}` }}
-          animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
-          transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
-        />
-        {/* Second pulse ring */}
-        <motion.div
-          className="absolute inset-0 rounded-full"
-          style={{ border: `2px solid ${theme.glowColor}` }}
-          animate={{ scale: [1, 1.35, 1], opacity: [0.3, 0, 0.3] }}
-          transition={{ duration: 2, repeat: Infinity, ease: "easeOut", delay: 0.5 }}
-        />
-      </motion.div>
+          animate={{ y: [0, -8, 0], scale: [1, 1.02, 1] }}
+          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+          className="flex items-center justify-center rounded-full"
+          style={{
+            width: "140px",
+            height: "140px",
+            background: `linear-gradient(145deg, ${theme.color}, ${theme.secondaryColor})`,
+            boxShadow: `0 30px 70px ${theme.glowColor}`,
+          }}
+        >
+          <Activity size={56} color="#FFFFFF" strokeWidth={2.4} />
+          {/* Pulse ring effect */}
+          <motion.div
+            className="absolute inset-0 rounded-full"
+            style={{ border: `3px solid ${theme.glowColor}` }}
+            animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
+          />
+          {/* Second pulse ring */}
+          <motion.div
+            className="absolute inset-0 rounded-full"
+            style={{ border: `2px solid ${theme.glowColor}` }}
+            animate={{ scale: [1, 1.35, 1], opacity: [0.3, 0, 0.3] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "easeOut", delay: 0.5 }}
+          />
+        </motion.div>
+      </div>
 
-      <div className="relative z-10 flex flex-1 flex-col px-6 pb-7 pt-10">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+      {/* Main content container */}
+      <div className="relative z-10 flex flex-col h-full px-4 pb-8 pt-10 sm:px-6 md:px-8 lg:px-12">
+        {/* Header - always visible at top */}
+        <div className="flex items-center justify-between mb-4">
           <div style={{ color: theme.color, fontSize: "11px", fontWeight: 700, letterSpacing: "0.2em", fontFamily: "'Archivo', sans-serif" }}>
             ECHORUN
           </div>
@@ -125,8 +130,8 @@ export function LandingScreen({ theme, onContinue }: LandingScreenProps) {
           </div>
         </div>
 
-        {/* Main content */}
-        <div className="mt-4 sm:mt-auto">
+        {/* Content area */}
+        <div className="flex-1 flex flex-col justify-end">
           <motion.div 
             initial={{ opacity: 0, y: 16 }} 
             animate={{ opacity: 1, y: 0 }} 
@@ -136,8 +141,8 @@ export function LandingScreen({ theme, onContinue }: LandingScreenProps) {
             <h1
               style={{
                 color: "#111827",
-                fontSize: "36px",
-                lineHeight: 0.98,
+                fontSize: "32px",
+                lineHeight: 1.05,
                 fontWeight: 800,
                 letterSpacing: "-0.02em",
                 fontFamily: "'Archivo Black', sans-serif",
@@ -152,12 +157,12 @@ export function LandingScreen({ theme, onContinue }: LandingScreenProps) {
             </p>
           </motion.div>
 
-          {/* Feature cards */}
+          {/* Feature cards - always horizontal */}
           <motion.div 
             initial={{ opacity: 0, y: 12 }} 
             animate={{ opacity: 1, y: 0 }} 
             transition={{ duration: 0.4, delay: 0.1 }}
-            className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-3"
+            className="mt-6 grid grid-cols-3 gap-2 max-w-xs mx-auto w-full"
           >
             {[
               { icon: Bot, label: "AI Coach", color: "#14B8A6", bgColor: "rgba(20,184,166,0.12)", borderColor: "#99F6E4" },
