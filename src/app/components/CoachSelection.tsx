@@ -168,27 +168,6 @@ export function CoachSelection() {
     setTimeout(() => scrollToCard(0), 100);
   }, [scrollToCard]);
 
-  useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(getStorageKey("ECHORUN_COACH")) || "{}");
-      const storedCoachIdx = coaches.findIndex((coach) => coach.alias === stored?.alias);
-
-      if (stored?.alias === "CUSTOM") {
-        setSelectedIdx(coaches.length);
-        setTimeout(() => scrollToCard(coaches.length), 100);
-        setCustomRequest(stored.customStyleRequest || "");
-        setCustomPersonaPrompt(stored.customPersonaPrompt || "");
-        setCustomPersonaSummary(stored.customPersonaSummary || "");
-        setCustomVoiceStyle(stored.voiceStyle || "gentle");
-      } else if (storedCoachIdx >= 0) {
-        setSelectedIdx(storedCoachIdx);
-        setTimeout(() => scrollToCard(storedCoachIdx), 100);
-      }
-    } catch {
-      // Ignore malformed storage.
-    }
-  }, [scrollToCard]);
-
   const handleScroll = () => {
     if (!scrollRef.current || isScrollingProgrammatically) return;
 

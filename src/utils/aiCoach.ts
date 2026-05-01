@@ -40,16 +40,16 @@ type VoiceStyle = "gentle" | "harsh" | "hype" | "analytic";
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const COACH_STORAGE_KEY = "ECHORUN_COACH";
-const GLOBAL_COOLDOWN_MS = 18000;
+const GLOBAL_COOLDOWN_MS = 10000;
 const EVENT_COOLDOWN_MS: Record<EventName, number> = {
-  ahead_50: 45000,
-  ahead_100: 45000,
-  ahead_200: 60000,
-  behind_50: 45000,
-  behind_100: 45000,
-  behind_200: 60000,
-  new_lead: 30000,
-  lost_lead: 30000,
+  ahead_50: 25000,
+  ahead_100: 25000,
+  ahead_200: 35000,
+  behind_50: 25000,
+  behind_100: 25000,
+  behind_200: 35000,
+  new_lead: 20000,
+  lost_lead: 20000,
   distance_500m: 0,
   distance_1km: 0,
   distance_2km: 0,
