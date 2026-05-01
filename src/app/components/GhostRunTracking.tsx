@@ -7,6 +7,7 @@ import { evaluateBadges, ALL_BADGES } from "../../utils/badges.js";
 import { updateProfileAfterRun, getProfile } from "../../utils/profile.js";
 import { saveRunRecord } from "../../utils/storage.js";
 import { getCoachMessage, resetCoachSession } from "../../utils/coachMessages.js";
+import { generateCoachLine, getCoachLifecycleLine, getGapBucket, getLeadState, resetAiCoachSession } from "../../utils/aiCoach";
 import { getStorageKey } from "../../utils/auth.js";
 import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 import { LiveRunMap } from "./LiveRunMap";
@@ -230,7 +231,8 @@ export function GhostRunTracking() {
       return {};
     }
   })();
-  const coachAlias: string = storedCoach.alias || "DREDD";
+  const coachAlias: string = storedCoach.displayAlias || storedCoach.alias || "DREDD";
+  const coachVoiceAlias: string = storedCoach.baseCoachAlias || storedCoach.alias || "DREDD";
   const coachColor: string = storedCoach.color || "#EF4444";
   const coachEmoji: string = storedCoach.emoji || "C";
 
@@ -250,6 +252,8 @@ export function GhostRunTracking() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const milestoneRef = useRef({ m500: false, m1k: false, m2k: false, t5: false, t10: false });
   const prevGapRef = useRef(0);
+  const gapBucketRef = useRef<ReturnType<typeof getGapBucket>>(null);
+  const leadStateRef = useRef<ReturnType<typeof getLeadState>>("even");
   const lastTrackedPositionRef = useRef<LngLatTuple | null>(null);
 
   const ghostDistance = isGhostMode && ghostRecord ? getDistanceAtTime(ghostRecord.distanceSeries || [], elapsed, ghostRecord.duration, ghostRecord.distance) : 0;
@@ -272,15 +276,26 @@ export function GhostRunTracking() {
   const announceCoach = useCallback((message: string, soundEffect?: string) => {
     setCoachMsg(message);
     if (soundEffect) playSoundEffect(soundEffect);
-    speakMessage(message, { coachAlias });
-  }, [coachAlias]);
+    speakMessage(message, { coachAlias: coachVoiceAlias });
+  }, [coachVoiceAlias]);
 
-  const triggerMsg = useCallback((event: string) => {
-    const msg = getCoachMessage(coachAlias, event);
+  const triggerMsg = useCallback(async (event: Parameters<typeof generateCoachLine>[0]["event"]) => {
+    const msg =
+      await generateCoachLine({
+        coachAlias: coachVoiceAlias,
+        event,
+        mode: isGhostMode ? "ghost" : "standard",
+        elapsed,
+        distance,
+        pace,
+        gap: isGhostMode ? gap : undefined,
+        ghostName: ghostRecord?.runnerName || ghostRecord?.title || "Ghost",
+      }) ?? getCoachMessage(coachVoiceAlias, event);
+
     if (msg) {
       announceCoach(msg);
     }
-  }, [announceCoach, coachAlias]);
+  }, [announceCoach, coachVoiceAlias, distance, elapsed, gap, ghostRecord?.runnerName, ghostRecord?.title, isGhostMode, pace]);
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -308,12 +323,27 @@ export function GhostRunTracking() {
     }
 
     if (isGhostMode) {
-      const previousGap = prevGapRef.current;
-      if (gap > 0 && previousGap <= 0) triggerMsg("new_lead");
-      if (gap < 0 && previousGap >= 0) triggerMsg("lost_lead");
+      const previousLeadState = leadStateRef.current;
+      const nextLeadState = getLeadState(gap);
+      const previousBucket = gapBucketRef.current;
+      const nextBucket = getGapBucket(gap);
+
+      if (previousLeadState !== nextLeadState) {
+        if (nextLeadState === "ahead" && previousLeadState !== "ahead") triggerMsg("new_lead");
+        if (nextLeadState === "behind" && previousLeadState === "ahead") triggerMsg("lost_lead");
+        leadStateRef.current = nextLeadState;
+      }
+
+      if (nextBucket && nextBucket !== previousBucket) {
+        triggerMsg(nextBucket);
+        gapBucketRef.current = nextBucket;
+      }
+
+      if (!nextBucket) {
+        gapBucketRef.current = null;
+      }
+
       if (gap < 0) setWasBehind(true);
-      if (gap > previousGap && gap < 0) triggerMsg("closing_gap");
-      if (gap < previousGap && gap > 0) triggerMsg("gap_widening");
       prevGapRef.current = gap;
     }
   }, [distance, elapsed, gap, isGhostMode, phase, triggerMsg]);
@@ -371,9 +401,12 @@ export function GhostRunTracking() {
 
   const handleStart = () => {
     resetCoachSession();
+    resetAiCoachSession();
     stopTimers();
     milestoneRef.current = { m500: false, m1k: false, m2k: false, t5: false, t10: false };
     prevGapRef.current = 0;
+    gapBucketRef.current = null;
+    leadStateRef.current = "even";
     setElapsed(0);
     setDistance(0);
     setWasBehind(false);
@@ -385,7 +418,9 @@ export function GhostRunTracking() {
     setPhase("running");
     startTimers();
     announceCoach(
-      currentPosition ? (isGhostMode ? "Ghost run started. Let's go." : "Run started. GPS tracking is live.") : "Waiting for GPS fix. Hold still for a moment.",
+      currentPosition
+        ? getCoachLifecycleLine(coachVoiceAlias, isGhostMode ? "start_ghost" : "start_standard")
+        : getCoachLifecycleLine(coachVoiceAlias, "start_waiting"),
       "start",
     );
   };
@@ -393,14 +428,14 @@ export function GhostRunTracking() {
   const handlePause = () => {
     stopTimers();
     setPhase("paused");
-    announceCoach("Run paused. Hold your position and resume when ready.", "pause");
+    announceCoach(getCoachLifecycleLine(coachVoiceAlias, "pause"), "pause");
   };
 
   const handleResume = () => {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
-    announceCoach("Run resumed. Settle back into your pace.", "resume");
+    announceCoach(getCoachLifecycleLine(coachVoiceAlias, "resume"), "resume");
   };
 
   const handleStop = () => {
@@ -422,7 +457,7 @@ export function GhostRunTracking() {
           : outcome === "lose"
             ? `Run complete. The ghost won this time. You earned ${pointsEarned} points.`
             : `Run complete. It was almost a tie. You earned ${pointsEarned} points.`,
-        { coachAlias },
+        { coachAlias: coachVoiceAlias },
       );
       return;
     }
@@ -433,7 +468,7 @@ export function GhostRunTracking() {
     updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
     setStandardResult({ pointsEarned, newBadges });
     playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
-    speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias });
+    speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias: coachVoiceAlias });
   };
 
   const handleSave = () => {

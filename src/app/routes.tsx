@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createBrowserRouter, Outlet, useNavigate, useLocation } from "react-router";
+import { createHashRouter, Outlet, useNavigate, useLocation } from "react-router";
 import { CoachSelection } from "./components/CoachSelection";
 import { GhostRunTracking } from "./components/GhostRunTracking";
 import { PostRunDashboard } from "./components/PostRunDashboard";
@@ -113,7 +113,7 @@ function Root() {
   );
 }
 
-export const router = createBrowserRouter([
+export const router = createHashRouter([
   {
     path: "/",
     Component: Root,
@@ -123,4 +123,4 @@ export const router = createBrowserRouter([
       { path: "dashboard", Component: PostRunDashboard },
     ],
   },
-], { basename: import.meta.env.PROD ? '/echorun/' : '/' });
+]);

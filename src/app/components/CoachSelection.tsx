@@ -6,6 +6,7 @@ import { getProfile } from "../../utils/profile.js";
 import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
 import { getStorageKey } from "../../utils/auth.js";
+import { generateCustomCoachPersona, voiceStyleToCoachAlias } from "../../utils/aiCoach";
 import { getAudioStatus, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 
 const coaches = [
@@ -75,6 +76,8 @@ const coaches = [
   },
 ];
 
+const CUSTOM_CARD_ID = 999;
+
 function WaveformBars({ isPlaying, color }: { isPlaying: boolean; color: string }) {
   const [heights, setHeights] = useState([4, 8, 12, 7, 5, 10, 8, 4, 6, 9, 5, 7]);
 
@@ -126,6 +129,12 @@ export function CoachSelection() {
   const [profile, setProfile] = useState<any>(null);
   const [audioStatus, setAudioStatus] = useState(getAudioStatus());
   const [isScrollingProgrammatically, setIsScrollingProgrammatically] = useState(false);
+  const [customRequest, setCustomRequest] = useState("");
+  const [customPersonaPrompt, setCustomPersonaPrompt] = useState("");
+  const [customPersonaSummary, setCustomPersonaSummary] = useState("");
+  const [customVoiceStyle, setCustomVoiceStyle] = useState("gentle");
+  const [personaLoading, setPersonaLoading] = useState(false);
+  const [personaError, setPersonaError] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -159,6 +168,27 @@ export function CoachSelection() {
     setTimeout(() => scrollToCard(0), 100);
   }, [scrollToCard]);
 
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(getStorageKey("ECHORUN_COACH")) || "{}");
+      const storedCoachIdx = coaches.findIndex((coach) => coach.alias === stored?.alias);
+
+      if (stored?.alias === "CUSTOM") {
+        setSelectedIdx(coaches.length);
+        setTimeout(() => scrollToCard(coaches.length), 100);
+        setCustomRequest(stored.customStyleRequest || "");
+        setCustomPersonaPrompt(stored.customPersonaPrompt || "");
+        setCustomPersonaSummary(stored.customPersonaSummary || "");
+        setCustomVoiceStyle(stored.voiceStyle || "gentle");
+      } else if (storedCoachIdx >= 0) {
+        setSelectedIdx(storedCoachIdx);
+        setTimeout(() => scrollToCard(storedCoachIdx), 100);
+      }
+    } catch {
+      // Ignore malformed storage.
+    }
+  }, [scrollToCard]);
+
   const handleScroll = () => {
     if (!scrollRef.current || isScrollingProgrammatically) return;
 
@@ -180,8 +210,51 @@ export function CoachSelection() {
     setSelectedIdx(closestIndex);
   };
 
-  const selectedCoach = coaches[selectedIdx];
+  const customBaseCoach = coaches[0];
+  const customCard = {
+    id: CUSTOM_CARD_ID,
+    name: "Your Custom Coach",
+    alias: "CUSTOM",
+    style: "AI Tailored",
+    vibe: "Make It Yours",
+    description: "Describe the tone you want and turn it into a dedicated coach personality.",
+    color: "#2563EB",
+    secondaryColor: "#1D4ED8",
+    glowColor: "rgba(37,99,235,0.22)",
+    gradient: "linear-gradient(160deg, #EFF6FF 0%, #F7F8FA 100%)",
+    borderColor: "#93C5FD",
+    sample: customPersonaSummary || "Describe the voice you want, then generate a custom coach persona.",
+    avatar: "",
+    emoji: "AI",
+    isCustom: true,
+  };
+  const cards = [...coaches, customCard];
+  const selectedCoach = cards[selectedIdx];
+  const isCustomSelected = selectedCoach.id === CUSTOM_CARD_ID;
   const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
+
+  const handleGeneratePersona = async () => {
+    const trimmed = customRequest.trim();
+    if (!trimmed) {
+      setPersonaError("Describe the coach you want first.");
+      return;
+    }
+
+    setPersonaLoading(true);
+    setPersonaError("");
+
+    const generated = await generateCustomCoachPersona({
+      coachAlias: customBaseCoach.alias,
+      coachName: customBaseCoach.name,
+      baseStyle: customBaseCoach.style,
+      userRequest: trimmed,
+    });
+
+    setCustomPersonaPrompt(generated.prompt);
+    setCustomPersonaSummary(generated.summary);
+    setCustomVoiceStyle(generated.voiceStyle || "gentle");
+    setPersonaLoading(false);
+  };
 
   return (
     <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background: "#F7F8FA" }}>
@@ -270,9 +343,10 @@ export function CoachSelection() {
               paddingBottom: "8px",
             }}
           >
-            {coaches.map((coach, idx) => {
+            {cards.map((coach, idx) => {
               const isActive = idx === selectedIdx;
               const isPlaying = playingId === coach.id;
+              const isCustomCard = coach.id === CUSTOM_CARD_ID;
 
               return (
                 <motion.div
@@ -283,19 +357,46 @@ export function CoachSelection() {
                   className="relative flex-shrink-0 rounded-2xl overflow-hidden cursor-pointer"
                   style={{ width: "min(280px, calc(100vw - 48px))", maxWidth: "100%", scrollSnapAlign: "center", background: "#FFFFFF", border: `1.5px solid ${isActive ? coach.borderColor : "#E5E7EB"}`, boxShadow: isActive ? "0 8px 24px rgba(15,23,42,0.10)" : "0 2px 8px rgba(15,23,42,0.06)" }}
                 >
-                  {/* Image area */}
-                  <div className="relative overflow-hidden" style={{ height: "clamp(150px, 24dvh, 200px)" }}>
-                    <img src={coach.avatar} alt={coach.name} className="w-full h-full object-cover" style={{ filter: "saturate(0.75) brightness(1.05)" }} />
-                    <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, rgba(255,255,255,0.95) 100%)" }} />
-                    <div className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.9)", border: `1px solid ${coach.borderColor}`, fontSize: "20px" }}>
-                      {coach.emoji}
-                    </div>
-                    {isActive && (
-                      <div className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: coach.color, boxShadow: `0 0 10px ${coach.color}` }}>
-                        <Check size={14} color="#fff" strokeWidth={3} />
+                  {!isCustomCard ? (
+                    <div className="relative overflow-hidden" style={{ height: "clamp(150px, 24dvh, 200px)" }}>
+                      <img src={coach.avatar} alt={coach.name} className="w-full h-full object-cover" style={{ filter: "saturate(0.75) brightness(1.05)" }} />
+                      <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 50%, rgba(255,255,255,0.95) 100%)" }} />
+                      <div className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.9)", border: `1px solid ${coach.borderColor}`, fontSize: "20px" }}>
+                        {coach.emoji}
                       </div>
-                    )}
-                  </div>
+                      {isActive && (
+                        <div className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: coach.color, boxShadow: `0 0 10px ${coach.color}` }}>
+                          <Check size={14} color="#fff" strokeWidth={3} />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="relative overflow-hidden p-4" style={{ height: "clamp(150px, 24dvh, 200px)", background: "radial-gradient(circle at 20% 20%, rgba(37,99,235,0.22) 0%, rgba(255,255,255,0.96) 55%, #FFFFFF 100%)" }}>
+                      <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.78) 100%)" }} />
+                      <div className="relative flex h-full flex-col justify-between">
+                        <div className="flex items-start justify-between">
+                          <div className="px-2 py-1 rounded-full" style={{ background: "#FFFFFF", border: `1px solid ${coach.borderColor}`, fontSize: "9px", color: coach.color, fontWeight: 800, letterSpacing: "0.12em" }}>
+                            PERSONALIZED
+                          </div>
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "#FFFFFF", border: `1px solid ${coach.borderColor}`, fontSize: "14px", fontWeight: 900, color: coach.color }}>
+                            AI
+                          </div>
+                        </div>
+                        <div className="relative">
+                          <div style={{ fontSize: "11px", color: coach.color, fontWeight: 800, letterSpacing: "0.18em", marginBottom: "4px" }}>FIFTH COACH</div>
+                          <div style={{ fontSize: "24px", color: "#111827", fontWeight: 900, lineHeight: 1, fontFamily: "'Archivo Black', sans-serif" }}>Built By You</div>
+                          <div style={{ fontSize: "12px", color: "#6B7280", marginTop: "6px", lineHeight: 1.35 }}>
+                            {customPersonaSummary || "One sentence in. One coach persona out."}
+                          </div>
+                        </div>
+                      </div>
+                      {isActive && (
+                        <div className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center" style={{ background: coach.color, boxShadow: `0 0 10px ${coach.color}` }}>
+                          <Check size={14} color="#fff" strokeWidth={3} />
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="p-4">
                     <div style={{ fontSize: "10px", letterSpacing: "0.2em", color: coach.color, fontWeight: 700, marginBottom: "2px" }}>{coach.alias}</div>
@@ -313,31 +414,72 @@ export function CoachSelection() {
                       </div>
                     </div>
 
-                    <div className="px-3 py-2.5 rounded-xl mb-3" style={{ background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: "12px", color: "#6B7280", fontStyle: "italic", lineHeight: 1.4 }}>
-                      "{coach.sample}"
-                    </div>
+                    {!isCustomCard ? (
+                      <>
+                        <div className="px-3 py-2.5 rounded-xl mb-3" style={{ background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: "12px", color: "#6B7280", fontStyle: "italic", lineHeight: 1.4 }}>
+                          "{coach.sample}"
+                        </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isPlaying) {
-                          stopSpeech();
-                          setPlayingId(null);
-                        } else {
-                          playCoachSample(coach, setPlayingId);
-                        }
-                      }}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl transition-all active:scale-95"
-                      style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}`, color: coach.color }}
-                    >
-                      <motion.div animate={{ scale: isPlaying ? [1, 1.2, 1] : 1 }} transition={{ repeat: isPlaying ? Infinity : 0, duration: 0.8 }}>
-                        {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-                      </motion.div>
-                      <WaveformBars isPlaying={isPlaying} color={coach.color} />
-                      <span style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em" }}>
-                        {isPlaying ? "PLAYING..." : audioStatus.enabled ? "LISTEN TO SAMPLE" : "VOICE MUTED"}
-                      </span>
-                    </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isPlaying) {
+                              stopSpeech();
+                              setPlayingId(null);
+                            } else {
+                              playCoachSample(coach, setPlayingId);
+                            }
+                          }}
+                          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl transition-all active:scale-95"
+                          style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}`, color: coach.color }}
+                        >
+                          <motion.div animate={{ scale: isPlaying ? [1, 1.2, 1] : 1 }} transition={{ repeat: isPlaying ? Infinity : 0, duration: 0.8 }}>
+                            {isPlaying ? <Pause size={15} /> : <Play size={15} />}
+                          </motion.div>
+                          <WaveformBars isPlaying={isPlaying} color={coach.color} />
+                          <span style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em" }}>
+                            {isPlaying ? "PLAYING..." : audioStatus.enabled ? "LISTEN TO SAMPLE" : "VOICE MUTED"}
+                          </span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <textarea
+                          value={customRequest}
+                          onChange={(event) => setCustomRequest(event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          placeholder="I want a gentle coach who celebrates progress and gives short practical cues."
+                          rows={3}
+                          className="w-full rounded-xl px-3 py-3 outline-none resize-none mb-3"
+                          style={{ border: "1px solid #E5E7EB", background: "#F9FAFB", fontSize: "12px", color: "#111827", lineHeight: 1.45 }}
+                        />
+
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleGeneratePersona();
+                          }}
+                          disabled={personaLoading}
+                          className="w-full py-3 rounded-xl transition-all active:scale-95"
+                          style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}`, color: coach.color, fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em", opacity: personaLoading ? 0.75 : 1 }}
+                        >
+                          {personaLoading ? "GENERATING..." : "GENERATE CUSTOM PERSONA"}
+                        </button>
+
+                        {personaError && isActive && (
+                          <div className="mt-3 px-3 py-2 rounded-xl" style={{ background: "#FEF2F2", border: "1px solid #FECACA", fontSize: "11px", color: "#B91C1C", fontWeight: 600 }}>
+                            {personaError}
+                          </div>
+                        )}
+
+                        {customPersonaSummary && (
+                          <div className="mt-3 px-3 py-2.5 rounded-xl" style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}` }}>
+                            <div style={{ fontSize: "9px", color: coach.color, fontWeight: 800, letterSpacing: "0.12em", marginBottom: "4px" }}>PERSONA READY</div>
+                            <div style={{ fontSize: "12px", color: "#111827", fontWeight: 700, lineHeight: 1.35 }}>{customPersonaSummary}</div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </motion.div>
               );
@@ -354,19 +496,19 @@ export function CoachSelection() {
 
             <div className="flex items-center gap-3">
               <div className="flex gap-1.5">
-                {coaches.map((_, idx) => (
+                {cards.map((_, idx) => (
                   <button key={idx} onClick={() => scrollToCard(idx)} className="transition-all duration-300 rounded-full"
                     style={{ width: selectedIdx === idx ? "16px" : "5px", height: "5px", background: selectedIdx === idx ? selectedCoach.color : "#D1D5DB" }} />
                 ))}
               </div>
               <span style={{ fontSize: "10px", color: "#9CA3AF", fontWeight: 600, letterSpacing: "0.1em" }}>
-                {selectedIdx + 1}/{coaches.length}
+                {selectedIdx + 1}/{cards.length}
               </span>
             </div>
 
-            <button onClick={() => scrollToCard(Math.min(coaches.length - 1, selectedIdx + 1))} disabled={selectedIdx === coaches.length - 1}
+            <button onClick={() => scrollToCard(Math.min(cards.length - 1, selectedIdx + 1))} disabled={selectedIdx === cards.length - 1}
               className="w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90"
-              style={{ background: selectedIdx === coaches.length - 1 ? "#F3F4F6" : "#FFFFFF", border: "1px solid #E5E7EB", color: selectedIdx === coaches.length - 1 ? "#D1D5DB" : "#6B7280" }}>
+              style={{ background: selectedIdx === cards.length - 1 ? "#F3F4F6" : "#FFFFFF", border: "1px solid #E5E7EB", color: selectedIdx === cards.length - 1 ? "#D1D5DB" : "#6B7280" }}>
               <ChevronRight size={16} />
             </button>
           </div>
@@ -396,7 +538,34 @@ export function CoachSelection() {
               initial={{ opacity: 1 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => {
-                localStorage.setItem(getStorageKey("ECHORUN_COACH"), JSON.stringify({ alias: selectedCoach.alias, color: selectedCoach.color, emoji: selectedCoach.emoji, borderColor: selectedCoach.borderColor }));
+                if (isCustomSelected && !customPersonaPrompt.trim()) {
+                  setPersonaError("Generate the custom persona card before confirming it.");
+                  return;
+                }
+
+                localStorage.setItem(getStorageKey("ECHORUN_COACH"), JSON.stringify(
+                  isCustomSelected
+                    ? {
+                        alias: "CUSTOM",
+                        displayAlias: "CUSTOM",
+                        baseCoachAlias: voiceStyleToCoachAlias(customVoiceStyle),
+                        color: customCard.color,
+                        emoji: "AI",
+                        borderColor: customCard.borderColor,
+                        customStyleRequest: customRequest.trim(),
+                        customPersonaPrompt,
+                        customPersonaSummary,
+                        voiceStyle: customVoiceStyle,
+                      }
+                    : {
+                        alias: selectedCoach.alias,
+                        displayAlias: selectedCoach.alias,
+                        baseCoachAlias: selectedCoach.alias,
+                        color: selectedCoach.color,
+                        emoji: selectedCoach.emoji,
+                        borderColor: selectedCoach.borderColor,
+                      },
+                ));
                 setConfirmed(true);
                 setTimeout(() => navigate("/run"), 800);
               }}

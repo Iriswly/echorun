@@ -118,11 +118,17 @@ Create a local env file such as `.env.local` in the project root and add:
 ```bash
 VITE_AMAP_API_KEY=your_amap_js_api_key
 VITE_AMAP_SECURITY_JS_CODE=your_amap_security_js_code
+VITE_DEEPSEEK_API_KEY=your_deepseek_api_key
+VITE_XFYUN_APP_ID=your_xfyun_app_id
+VITE_XFYUN_API_KEY=your_xfyun_api_key
+VITE_XFYUN_API_SECRET=your_xfyun_api_secret
 ```
 
 Notes:
 
 - `VITE_AMAP_API_KEY` is required.
 - `VITE_AMAP_SECURITY_JS_CODE` is recommended for current AMap web security checks.
+- `VITE_DEEPSEEK_API_KEY` enables AI-generated live coach lines. If it is missing or the request fails, the app falls back to built-in scripted coach messages.
+- `VITE_XFYUN_APP_ID`, `VITE_XFYUN_API_KEY`, and `VITE_XFYUN_API_SECRET` enable XFYUN online TTS playback.
 - After editing env vars, restart `npm run dev`.
 - In the browser, allow location permission, otherwise live tracking cannot work.
