@@ -182,7 +182,7 @@ function resolveVoiceProfile(coachAlias, options = {}) {
     };
   }
 
-  if (stored?.ttsVcn) {
+  if (coachAlias === "CUSTOM" && stored?.ttsVcn) {
     return {
       vcn: stored.ttsVcn,
       rate: options.rate ?? 40,
@@ -191,7 +191,7 @@ function resolveVoiceProfile(coachAlias, options = {}) {
     };
   }
 
-  if (stored?.alias === "CUSTOM" && stored?.voiceStyle && CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle]) {
+  if (coachAlias === "CUSTOM" && stored?.alias === "CUSTOM" && stored?.voiceStyle && CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle]) {
     return {
       vcn: CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle],
       rate: 38,
