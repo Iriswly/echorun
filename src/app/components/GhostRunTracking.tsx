@@ -7,9 +7,10 @@ import { evaluateBadges, ALL_BADGES } from "../../utils/badges.js";
 import { updateProfileAfterRun, getProfile } from "../../utils/profile.js";
 import { saveRunRecord } from "../../utils/storage.js";
 import { getCoachMessage, resetCoachSession } from "../../utils/coachMessages.js";
-import { generateCoachLine, getCoachLifecycleLine, getGapBucket, getLeadState, resetAiCoachSession } from "../../utils/aiCoach";
+import { generateCoachLine, generateLifecycleLine, getGapBucket, getLeadState, resetAiCoachSession } from "../../utils/aiCoach";
 import { getStorageKey } from "../../utils/auth.js";
 import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
+import { RUN_STOP_REQUEST_EVENT, setActiveRunStatus } from "../../utils/runSession";
 import { LiveRunMap } from "./LiveRunMap";
 
 type LngLatTuple = [number, number];
@@ -270,8 +271,13 @@ export function GhostRunTracking() {
     return () => {
       unsubscribe();
       stopSpeech();
+      setActiveRunStatus({ isActive: false });
     };
   }, []);
+
+  useEffect(() => {
+    setActiveRunStatus({ isActive: (phase === "running" || phase === "paused") && elapsed > 0 });
+  }, [phase, elapsed]);
 
   const announceCoach = useCallback((message: string, soundEffect?: string) => {
     setCoachMsg(message);
@@ -399,7 +405,7 @@ export function GhostRunTracking() {
     setUserTrack((track) => (track.length === 0 ? [previousPoint, point] : [...track, point]));
   }, [phase]);
 
-  const handleStart = () => {
+  const handleStart = async () => {
     resetCoachSession();
     resetAiCoachSession();
     stopTimers();
@@ -417,28 +423,29 @@ export function GhostRunTracking() {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
-    announceCoach(
-      currentPosition
-        ? getCoachLifecycleLine(coachVoiceAlias, isGhostMode ? "start_ghost" : "start_standard")
-        : getCoachLifecycleLine(coachVoiceAlias, "start_waiting"),
-      "start",
-    );
+    const startEvent = currentPosition
+      ? (isGhostMode ? "start_ghost" : "start_standard")
+      : "start_waiting";
+    const startLine = await generateLifecycleLine(coachVoiceAlias, startEvent);
+    announceCoach(startLine, "start");
   };
 
-  const handlePause = () => {
+  const handlePause = async () => {
     stopTimers();
     setPhase("paused");
-    announceCoach(getCoachLifecycleLine(coachVoiceAlias, "pause"), "pause");
+    const pauseLine = await generateLifecycleLine(coachVoiceAlias, "pause");
+    announceCoach(pauseLine, "pause");
   };
 
-  const handleResume = () => {
+  const handleResume = async () => {
     lastTrackedPositionRef.current = currentPosition;
     setPhase("running");
     startTimers();
-    announceCoach(getCoachLifecycleLine(coachVoiceAlias, "resume"), "resume");
+    const resumeLine = await generateLifecycleLine(coachVoiceAlias, "resume");
+    announceCoach(resumeLine, "resume");
   };
 
-  const handleStop = () => {
+  const finalizeRun = useCallback(() => {
     stopTimers();
     setPhase("done");
 
@@ -459,7 +466,7 @@ export function GhostRunTracking() {
             : `Run complete. It was almost a tie. You earned ${pointsEarned} points.`,
         { coachAlias: coachVoiceAlias },
       );
-      return;
+      return { mode: "ghost" as const, pointsEarned, outcome, finalGap: gap };
     }
 
     const runResult = { mode: "standard" as const, distance, duration: elapsed, avgPace: pace, finalGap: 0, result: undefined, wasBehinDuringRun: false };
@@ -469,9 +476,10 @@ export function GhostRunTracking() {
     setStandardResult({ pointsEarned, newBadges });
     playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
     speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias: coachVoiceAlias });
-  };
+    return { mode: "standard" as const, pointsEarned };
+  }, [coachVoiceAlias, distance, elapsed, gap, isGhostMode, pace, stopTimers, wasBehinDuringRun]);
 
-  const handleSave = () => {
+  const persistRunRecord = useCallback((ghostResult?: { outcome: "win" | "lose" | "tie"; finalGap: number; pointsEarned: number } | null, standardPointsEarned?: number | null) => {
     saveRunRecord({
       mode: isGhostMode ? "ghost" : "standard",
       source: "self",
@@ -483,11 +491,40 @@ export function GhostRunTracking() {
       distanceSeries,
       date: new Date().toISOString(),
       coachAlias,
-      ...(isGhostMode && result ? { ghostRecordId: ghostRecord?.id, result: result.outcome, finalGap: result.finalGap, pointsEarned: result.pointsEarned } : {}),
-      ...(!isGhostMode && standardResult ? { pointsEarned: standardResult.pointsEarned } : {}),
+      ...(isGhostMode && ghostResult ? { ghostRecordId: ghostRecord?.id, result: ghostResult.outcome, finalGap: ghostResult.finalGap, pointsEarned: ghostResult.pointsEarned } : {}),
+      ...(!isGhostMode && typeof standardPointsEarned === "number" ? { pointsEarned: standardPointsEarned } : {}),
     });
+  }, [coachAlias, distance, distanceSeries, elapsed, ghostRecord?.id, ghostRecord?.runnerName, ghostRecord?.title, isGhostMode, pace]);
+
+  const handleStop = useCallback(() => {
+    finalizeRun();
+  }, [finalizeRun]);
+
+  const handleSave = () => {
+    persistRunRecord(result, standardResult?.pointsEarned ?? null);
     navigate("/dashboard");
   };
+
+  useEffect(() => {
+    const handleExternalStop = (event: Event) => {
+      if (phase !== "running" && phase !== "paused") return;
+
+      const destination = (event as CustomEvent<{ destination?: string }>).detail?.destination || "/dashboard";
+      const finalized = finalizeRun();
+      if (finalized.mode === "ghost") {
+        persistRunRecord(
+          { outcome: finalized.outcome, finalGap: finalized.finalGap, pointsEarned: finalized.pointsEarned },
+          null,
+        );
+      } else {
+        persistRunRecord(null, finalized.pointsEarned);
+      }
+      navigate(destination);
+    };
+
+    window.addEventListener(RUN_STOP_REQUEST_EVENT, handleExternalStop);
+    return () => window.removeEventListener(RUN_STOP_REQUEST_EVENT, handleExternalStop);
+  }, [finalizeRun, navigate, persistRunRecord, phase]);
 
   const deltaLabel = isGhostMode ? (gap === 0 ? "EVEN" : gap > 0 ? `+${Math.round(gap)}m` : `${Math.round(gap)}m`) : phase === "idle" ? "READY" : "LIVE";
   const deltaColor = isGhostMode ? (gap > 0 ? "#10B981" : gap < 0 ? "#F97316" : "#9CA3AF") : "#2563EB";

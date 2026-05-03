@@ -5,9 +5,9 @@ const XFYUN_TTS_URL = "wss://tts-api.xfyun.cn/v2/tts";
 
 export const COACH_VOICE_SETTINGS = {
   DREDD: { vcn: "x4_enuk_george_assist", rate: 50, pitch: 45, volume: 70 },
-  KIRA: { vcn: "x4_EnUs_Laura_education", rate: 35, pitch: 55, volume: 65 },
+  KIRA: { vcn: "x4_EnUs_Laura_education", rate: 40, pitch: 55, volume: 65 },
   TITAN: { vcn: "x4_enus_gavin_assist", rate: 55, pitch: 48, volume: 75 },
-  SPECTER: { vcn: "x4_EnUs_Lindsay_assist", rate: 35, pitch: 50, volume: 65 },
+  SPECTER: { vcn: "x4_EnUs_Lindsay_assist", rate: 40, pitch: 50, volume: 65 },
 };
 
 const CUSTOM_VOICE_STYLE_MAP = {
@@ -23,6 +23,8 @@ let audioContext = null;
 let currentAudio = null;
 let activeSocket = null;
 const listeners = new Set();
+const intentionallyClosedSockets = new Set();
+const intentionallyStoppedAudio = new Set();
 
 function hasWindow() {
   return typeof window !== "undefined";
@@ -93,7 +95,10 @@ export function clearAudioError() {
 
 function stopCurrentAudioElement() {
   if (!currentAudio) return;
+  intentionallyStoppedAudio.add(currentAudio);
   currentAudio.pause();
+  currentAudio.removeAttribute("src");
+  currentAudio.load();
   currentAudio.src = "";
   currentAudio = null;
 }
@@ -101,6 +106,7 @@ function stopCurrentAudioElement() {
 function stopCurrentSocket() {
   if (!activeSocket) return;
   try {
+    intentionallyClosedSockets.add(activeSocket);
     activeSocket.close();
   } catch {}
   activeSocket = null;
@@ -211,6 +217,7 @@ async function requestSpeechAudio(text, voiceProfile) {
     activeSocket = socket;
     const audioChunks = [];
     let settled = false;
+    const isIntentionalClose = () => intentionallyClosedSockets.has(socket);
 
     socket.onopen = () => {
       socket.send(JSON.stringify({
@@ -258,13 +265,20 @@ async function requestSpeechAudio(text, voiceProfile) {
     };
 
     socket.onerror = () => {
+      if (isIntentionalClose()) return;
       settled = true;
       reject(new Error("Failed to connect to XFYUN TTS."));
     };
 
     socket.onclose = () => {
+      const intentional = isIntentionalClose();
+      intentionallyClosedSockets.delete(socket);
       if (activeSocket === socket) {
         activeSocket = null;
+      }
+      if (intentional) {
+        settled = true;
+        return;
       }
       if (!settled && audioChunks.length === 0) {
         reject(new Error("XFYUN TTS request was interrupted."));
@@ -304,8 +318,10 @@ export async function speakMessage(text, options = {}) {
     const audioUrl = URL.createObjectURL(audioBlob);
     const audio = new Audio(audioUrl);
     currentAudio = audio;
+    const isIntentionalAudioStop = () => intentionallyStoppedAudio.has(audio);
 
     audio.onplay = () => {
+      intentionallyStoppedAudio.delete(audio);
       speaking = true;
       lastError = null;
       onStart?.();
@@ -313,6 +329,7 @@ export async function speakMessage(text, options = {}) {
     };
 
     audio.onended = () => {
+      intentionallyStoppedAudio.delete(audio);
       speaking = false;
       URL.revokeObjectURL(audioUrl);
       if (currentAudio === audio) currentAudio = null;
@@ -321,10 +338,18 @@ export async function speakMessage(text, options = {}) {
     };
 
     audio.onerror = () => {
+      const intentional = isIntentionalAudioStop();
+      intentionallyStoppedAudio.delete(audio);
       speaking = false;
-      lastError = "XFYUN audio playback failed.";
       URL.revokeObjectURL(audioUrl);
       if (currentAudio === audio) currentAudio = null;
+      if (intentional) {
+        lastError = null;
+        onEnd?.();
+        notifyAudioStatus();
+        return;
+      }
+      lastError = "XFYUN audio playback failed.";
       onError?.(lastError);
       notifyAudioStatus();
     };
@@ -333,7 +358,18 @@ export async function speakMessage(text, options = {}) {
     return true;
   } catch (error) {
     speaking = false;
-    lastError = error instanceof Error ? error.message : "XFYUN TTS failed.";
+    const message = error instanceof Error ? error.message : "XFYUN TTS failed.";
+    const isExpectedInterrupt =
+      message === "XFYUN TTS request was interrupted." ||
+      message === "The play() request was interrupted by a call to pause()." ||
+      (error instanceof DOMException && error.name === "AbortError");
+    if (isExpectedInterrupt) {
+      lastError = null;
+      onEnd?.();
+      notifyAudioStatus();
+      return false;
+    }
+    lastError = message;
     onError?.(lastError);
     notifyAudioStatus();
     return false;

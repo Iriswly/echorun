@@ -1,12 +1,67 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Trash2, Shield, Globe, Lock, Star, Trophy, Zap, Ghost, LogOut } from "lucide-react";
+import { Trash2, Shield, Globe, Lock, Star, Trophy, Zap, Ghost, LogOut, UserPlus, Users, X, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate } from "react-router";
 import { getProfile } from "../../utils/profile.js";
 import { getLevelInfo } from "../../utils/scoring.js";
-import { ALL_BADGES } from "../../utils/badges.js";
-import { getRunHistory } from "../../utils/storage.js";
+import { getRunHistory, saveRunRecord } from "../../utils/storage.js";
 import { getCurrentUser, getStorageKey, logoutAccount } from "../../utils/auth.js";
+
+const FRIENDS_KEY = "ECHORUN_FRIENDS";
+
+const friendThemes = [
+  { accent: "#7C3AED", soft: "#F5F3FF", border: "#D8B4FE", city: "Shanghai" },
+  { accent: "#EC4899", soft: "#FDF2F8", border: "#F9A8D4", city: "Seoul" },
+  { accent: "#14B8A6", soft: "#F0FDFA", border: "#99F6E4", city: "Tokyo" },
+  { accent: "#F97316", soft: "#FFF7ED", border: "#FDBA74", city: "Singapore" },
+];
+
+function getStoredFriends() {
+  try {
+    const raw = localStorage.getItem(getStorageKey(FRIENDS_KEY));
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredFriends(friends: any[]) {
+  localStorage.setItem(getStorageKey(FRIENDS_KEY), JSON.stringify(friends));
+}
+
+function createDemoFriendRun(name: string, accent: string) {
+  const now = Date.now();
+  const presets = [
+    { title: `${name}'s Sunset 4K`, distance: 4020, duration: 1220, avgPace: 303 },
+    { title: `${name}'s Tempo 5K`, distance: 5000, duration: 1460, avgPace: 292 },
+    { title: `${name}'s Lunch Break 3K`, distance: 3180, duration: 960, avgPace: 302 },
+  ];
+  const preset = presets[now % presets.length];
+  return {
+    mode: "standard",
+    source: "friend",
+    runnerName: name,
+    title: preset.title,
+    distance: preset.distance,
+    duration: preset.duration,
+    avgPace: preset.avgPace,
+    distanceSeries: [
+      { t: 0, d: 0 },
+      { t: Math.round(preset.duration * 0.33), d: Math.round(preset.distance * 0.31) },
+      { t: Math.round(preset.duration * 0.66), d: Math.round(preset.distance * 0.68) },
+      { t: preset.duration, d: preset.distance },
+    ],
+    date: new Date(now - 1000 * 60 * ((now % 180) + 30)).toISOString(),
+    pointsEarned: 0,
+    friendAccent: accent,
+  };
+}
+
+function deleteFriendById(id: number) {
+  const nextFriends = getStoredFriends().filter((friend: any) => friend.id !== id);
+  saveStoredFriends(nextFriends);
+  return nextFriends;
+}
 
 function deleteRunRecord(id: number) {
   try {
@@ -50,6 +105,20 @@ function getRunSourceLabel(run: any) {
   return "RUN";
 }
 
+function getFriendRunTheme(run: any) {
+  const accent = run.friendAccent || "#7C3AED";
+  if (accent === "#EC4899") {
+    return { accent, soft: "#FDF2F8", border: "#F9A8D4", shadow: "rgba(236,72,153,0.10)" };
+  }
+  if (accent === "#14B8A6") {
+    return { accent, soft: "#F0FDFA", border: "#99F6E4", shadow: "rgba(20,184,166,0.10)" };
+  }
+  if (accent === "#F97316") {
+    return { accent, soft: "#FFF7ED", border: "#FDBA74", shadow: "rgba(249,115,22,0.10)" };
+  }
+  return { accent: "#7C3AED", soft: "#F8F5FF", border: "#D8B4FE", shadow: "rgba(124,58,237,0.08)" };
+}
+
 function getInitials(name: string) {
   return String(name)
     .split(" ")
@@ -81,11 +150,16 @@ export function PostRunDashboard() {
   const [user, setUser] = useState<any>(getCurrentUser());
   const [isPublic, setIsPublic] = useState(false);
   const [deletingId, setDeletingId] = useState<number|null>(null);
+  const [friends, setFriends] = useState<any[]>([]);
+  const [friendName, setFriendName] = useState("");
+  const [friendNotice, setFriendNotice] = useState<string | null>(null);
+  const [friendsExpanded, setFriendsExpanded] = useState(false);
 
   useEffect(() => {
     setRuns(getRunHistory());
     setProfile(getProfile());
     setUser(getCurrentUser());
+    setFriends(getStoredFriends());
   }, []);
 
   const handleDelete = (id: number) => {
@@ -102,9 +176,43 @@ export function PostRunDashboard() {
     logoutAccount();
   };
 
-  const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
-  const unlockedBadges = new Set(profile?.badges || []);
+  const handleAddFriend = () => {
+    const trimmed = friendName.trim();
+    if (!trimmed) {
+      setFriendNotice("Enter a name first.");
+      return;
+    }
 
+    const alreadyExists = friends.some((friend) => String(friend.name).toLowerCase() === trimmed.toLowerCase());
+    if (alreadyExists) {
+      setFriendNotice("That friend is already in your list.");
+      return;
+    }
+
+    const theme = friendThemes[friends.length % friendThemes.length];
+    const newFriend = {
+      id: Date.now(),
+      name: trimmed,
+      initials: getInitials(trimmed),
+      accent: theme.accent,
+      soft: theme.soft,
+      border: theme.border,
+      city: theme.city,
+    };
+    const nextFriends = [newFriend, ...friends];
+    saveStoredFriends(nextFriends);
+    setFriends(nextFriends);
+    saveRunRecord(createDemoFriendRun(trimmed, theme.accent));
+    setRuns(getRunHistory());
+    setFriendName("");
+    setFriendNotice(`${trimmed} added with a demo ghost target.`);
+  };
+
+  const handleRemoveFriend = (id: number) => {
+    setFriends(deleteFriendById(id));
+  };
+
+  const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
   return (
     <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background:"#F7F8FA" }}>
       {/* Header */}
@@ -174,34 +282,110 @@ export function PostRunDashboard() {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth:"none", msOverflowStyle:"none" }}>
-
-        {/* === BADGE SHELF === */}
         <div className="px-4 sm:px-5 pt-4 pb-3">
-          <div className="flex items-center gap-2 mb-3">
-            <Star size={12} color="#F59E0B" fill="#F59E0B" />
-            <span style={{ fontSize:"12px", color:"#111827", fontWeight:700 }}>Badges</span>
-            <span style={{ fontSize:"10px", color:"#9CA3AF", fontWeight:600 }}>
-              {unlockedBadges.size}/{ALL_BADGES.length}
-            </span>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Users size={12} color="#7C3AED" />
+              <span style={{ fontSize:"12px", color:"#111827", fontWeight:700 }}>Friends</span>
+              <span style={{ fontSize:"10px", color:"#9CA3AF", fontWeight:600 }}>{friends.length} connected</span>
+            </div>
+            <button
+              onClick={() => setFriendsExpanded((value) => !value)}
+              className="flex items-center gap-1 rounded-full px-2.5 py-1 active:scale-95"
+              style={{ background:"#FFFFFF", border:"1px solid #DDD6FE" }}
+            >
+              <span style={{ fontSize:"9px", color:"#7C3AED", fontWeight:800, letterSpacing:"0.1em" }}>
+                {friendsExpanded ? "HIDE" : "SHOW"}
+              </span>
+              {friendsExpanded ? <ChevronUp size={12} color="#7C3AED" /> : <ChevronDown size={12} color="#7C3AED" />}
+            </button>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth:"none" }}>
-            {ALL_BADGES.map(badge => {
-              const unlocked = unlockedBadges.has(badge.id);
-              return (
-                <div key={badge.id} className="flex-shrink-0 flex flex-col items-center gap-1 p-2.5 rounded-xl"
-                  style={{ background: unlocked ? "#FFFBEB" : "#F9FAFB", border: unlocked ? "1px solid #FDE68A" : "1px solid #E5E7EB", minWidth:"72px", opacity: unlocked ? 1 : 0.45 }}>
-                  <span style={{ fontSize:"22px", filter: unlocked ? "none" : "grayscale(1)" }}>{badge.icon}</span>
-                  <div style={{ fontSize:"9px", fontWeight:700, color: unlocked ? "#92400E" : "#9CA3AF", textAlign:"center", lineHeight:1.2 }}>{badge.name}</div>
-                </div>
-              );
-            })}
+
+          <div className="rounded-2xl p-4" style={{ background:"linear-gradient(160deg, #FAF5FF 0%, #FFFFFF 60%, #F8FAFC 100%)", border:"1px solid #E9D5FF", boxShadow:"0 4px 18px rgba(124,58,237,0.08)" }}>
+            <div className="flex gap-2 max-[340px]:flex-col">
+              <input
+                value={friendName}
+                onChange={(event) => {
+                  setFriendName(event.target.value);
+                  if (friendNotice) setFriendNotice(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") handleAddFriend();
+                }}
+                placeholder="Add a demo friend by name"
+                className="flex-1 rounded-2xl px-4 py-3 outline-none"
+                style={{ background:"#FFFFFF", border:"1px solid #DDD6FE", fontSize:"13px", color:"#111827" }}
+              />
+              <motion.button
+                whileTap={{ scale:0.96 }}
+                onClick={handleAddFriend}
+                className="rounded-2xl px-4 py-3 flex items-center justify-center gap-2"
+                style={{ background:"linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)", border:"none", boxShadow:"0 10px 20px rgba(124,58,237,0.20)" }}
+              >
+                <UserPlus size={14} color="#fff" />
+                <span style={{ fontSize:"12px", color:"#fff", fontWeight:800, letterSpacing:"0.06em", fontFamily:"'Archivo Black', sans-serif" }}>Add Friend</span>
+              </motion.button>
+            </div>
+
+            <div style={{ fontSize:"10px", color: friendNotice?.includes("added") ? "#7C3AED" : "#9CA3AF", fontWeight:600, marginTop:"10px", minHeight:"14px" }}>
+              {friendNotice || "Demo only: adding a friend also creates one local friend run for rematch testing."}
+            </div>
+
+            <AnimatePresence initial={false}>
+              {friendsExpanded && (
+                <motion.div
+                  initial={{ opacity:0, height:0 }}
+                  animate={{ opacity:1, height:"auto" }}
+                  exit={{ opacity:0, height:0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-4 flex flex-col gap-2">
+                    {friends.length === 0 ? (
+                      <div className="w-full rounded-2xl px-4 py-4 text-center" style={{ background:"#FFFFFF", border:"1px dashed #D8B4FE" }}>
+                        <div style={{ fontSize:"12px", fontWeight:700, color:"#374151", marginBottom:"4px" }}>No friends yet</div>
+                        <div style={{ fontSize:"11px", color:"#9CA3AF", lineHeight:1.45 }}>Add one to create a local demo friend target.</div>
+                      </div>
+                    ) : (
+                      friends.map((friend) => (
+                        <div
+                          key={friend.id}
+                          className="relative flex items-center gap-3 rounded-2xl px-3 py-2.5"
+                          style={{ background:friend.soft, border:`1px solid ${friend.border}` }}
+                        >
+                          <div
+                            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl text-xs font-bold text-white"
+                            style={{ background:friend.accent, boxShadow:`0 6px 14px ${friend.accent}33` }}
+                          >
+                            {friend.initials}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div style={{ fontSize:"11px", color:"#111827", fontWeight:800, marginBottom:"2px", lineHeight:1.1 }}>{friend.name}</div>
+                            <div style={{ fontSize:"9px", color:"#6B7280", lineHeight:1.3 }}>
+                              Demo target from <span style={{ color:friend.accent, fontWeight:800 }}>{friend.city}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveFriend(friend.id)}
+                            className="h-7 w-7 flex-shrink-0 rounded-full flex items-center justify-center active:scale-95"
+                            style={{ background:"rgba(255,255,255,0.7)", border:`1px solid ${friend.border}` }}
+                            aria-label={`Remove ${friend.name}`}
+                          >
+                            <X size={10} color={friend.accent} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
         {/* === RUN HISTORY === */}
         <div className="px-4 sm:px-5 pb-3">
-          <div className="flex items-center justify-between mb-3 pt-1" style={{ borderTop:"1px solid #E5E7EB" }}>
-            <div className="flex items-center gap-2 pt-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
               <Zap size={12} color="#2563EB" />
               <span style={{ fontSize:"12px", color:"#111827", fontWeight:700 }}>Recent Runs</span>
             </div>
@@ -220,6 +404,9 @@ export function PostRunDashboard() {
               {runs.map((run, idx) => (
                 <AnimatePresence key={run.id}>
                   {deletingId !== run.id && (
+                    (() => {
+                      const friendTheme = run.source === "friend" ? getFriendRunTheme(run) : null;
+                      return (
                     <motion.div
                       initial={{ opacity:0, x:-20 }}
                       animate={{ opacity:1, x:0 }}
@@ -227,16 +414,16 @@ export function PostRunDashboard() {
                       transition={{ delay: idx * 0.05, duration:0.3 }}
                       className="p-4 rounded-xl"
                       style={{
-                        background: run.source === "friend" ? "#F8F5FF" : "#FFFFFF",
-                        border: run.source === "friend" ? "1px solid #D8B4FE" : "1px solid #E5E7EB",
-                        boxShadow: run.source === "friend" ? "0 4px 18px rgba(124,58,237,0.08)" : "0 2px 8px rgba(15,23,42,0.06)",
-                        borderLeft: run.source === "friend" ? "6px solid #7C3AED" : "6px solid #2563EB",
+                        background: run.source === "friend" ? friendTheme!.soft : "#FFFFFF",
+                        border: run.source === "friend" ? `1px solid ${friendTheme!.border}` : "1px solid #E5E7EB",
+                        boxShadow: run.source === "friend" ? `0 4px 18px ${friendTheme!.shadow}` : "0 2px 8px rgba(15,23,42,0.06)",
+                        borderLeft: run.source === "friend" ? `6px solid ${friendTheme!.accent}` : "6px solid #2563EB",
                       }}>
 
                       {/* Top row */}
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="min-w-0">
-                          <div style={{ fontSize:"8px", color: run.source === "friend" ? "#7C3AED" : "#2563EB", fontWeight:700, letterSpacing:"0.14em", marginBottom:"4px" }}>
+                          <div style={{ fontSize:"8px", color: run.source === "friend" ? friendTheme!.accent : "#2563EB", fontWeight:700, letterSpacing:"0.14em", marginBottom:"4px" }}>
                             {getRunSourceLabel(run)}
                           </div>
                           {run.title && (
@@ -249,7 +436,7 @@ export function PostRunDashboard() {
                             <span style={{ fontSize:"10px", color:"#9CA3AF" }}>{fmtTime(run.date)}</span>
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <div className="px-1.5 py-0.5 rounded-full" style={{ background: run.mode === "ghost" ? "#FFF7ED" : "#EFF6FF", border: run.mode === "ghost" ? "1px solid #FDBA74" : "1px solid #BFDBFE", fontSize:"8px", color: run.mode === "ghost" ? "#F97316" : "#2563EB", fontWeight:700, letterSpacing:"0.08em" }}>
+                            <div className="px-1.5 py-0.5 rounded-full" style={{ background: run.mode === "ghost" ? "#FFF7ED" : run.source === "friend" ? `${friendTheme!.accent}12` : "#EFF6FF", border: run.mode === "ghost" ? "1px solid #FDBA74" : run.source === "friend" ? `1px solid ${friendTheme!.border}` : "1px solid #BFDBFE", fontSize:"8px", color: run.mode === "ghost" ? "#F97316" : run.source === "friend" ? friendTheme!.accent : "#2563EB", fontWeight:700, letterSpacing:"0.08em" }}>
                               {run.mode === "ghost" ? "👻 GHOST" : "🏃 STANDARD"}
                             </div>
                             {run.result && <ResultPill result={run.result} />}
@@ -304,6 +491,8 @@ export function PostRunDashboard() {
                         </motion.button>
                       </div>
                     </motion.div>
+                      );
+                    })()
                   )}
                 </AnimatePresence>
               ))}

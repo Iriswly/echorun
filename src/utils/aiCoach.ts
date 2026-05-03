@@ -38,18 +38,19 @@ type CustomPersonaInput = {
 
 type VoiceStyle = "gentle" | "harsh" | "hype" | "analytic";
 
-const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
+const DASHSCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+const DEFAULT_DASHSCOPE_MODEL = "qwen-plus";
 const COACH_STORAGE_KEY = "ECHORUN_COACH";
-const GLOBAL_COOLDOWN_MS = 10000;
+const GLOBAL_COOLDOWN_MS = 5000;
 const EVENT_COOLDOWN_MS: Record<EventName, number> = {
-  ahead_50: 25000,
-  ahead_100: 25000,
-  ahead_200: 35000,
-  behind_50: 25000,
-  behind_100: 25000,
-  behind_200: 35000,
-  new_lead: 20000,
-  lost_lead: 20000,
+  ahead_50: 12000,
+  ahead_100: 12000,
+  ahead_200: 18000,
+  behind_50: 12000,
+  behind_100: 12000,
+  behind_200: 18000,
+  new_lead: 10000,
+  lost_lead: 10000,
   distance_500m: 0,
   distance_1km: 0,
   distance_2km: 0,
@@ -123,6 +124,39 @@ const lifecycleMessages: Record<string, Record<"start_standard" | "start_ghost" 
   },
 };
 
+const lifecycleCache: Record<string, Record<string, string>> = {};
+
+const lifecyclePromptTemplates: Record<string, Record<string, string>> = {
+  DREDD: {
+    start_standard: "Generate a short, punchy startup line for a run. Tone: harsh, sarcastic. Max 10 words.",
+    start_ghost: "Generate a short, aggressive ghost run start line. Tone: harsh, mocking. Max 10 words.",
+    start_waiting: "Generate a short, impatient waiting for GPS line. Tone: sarcastic. Max 10 words.",
+    pause: "Generate a short, mocking pause line. Tone: harsh. Max 10 words.",
+    resume: "Generate a short, demanding resume line. Tone: harsh, commanding. Max 10 words.",
+  },
+  KIRA: {
+    start_standard: "Generate a short, calming run start line. Tone: gentle, mindful. Max 10 words.",
+    start_ghost: "Generate a short, peaceful ghost run start line. Tone: gentle, soothing. Max 10 words.",
+    start_waiting: "Generate a short, patient waiting for GPS line. Tone: gentle, reassuring. Max 10 words.",
+    pause: "Generate a short, soothing pause line. Tone: gentle, calming. Max 10 words.",
+    resume: "Generate a short, welcoming resume line. Tone: gentle, encouraging. Max 10 words.",
+  },
+  TITAN: {
+    start_standard: "Generate a short, explosive run start line. Tone: hype, aggressive. Max 10 words.",
+    start_ghost: "Generate a short, intense ghost run start line. Tone: hype, dominating. Max 10 words.",
+    start_waiting: "Generate a short, urgent waiting for GPS line. Tone: hype, impatient. Max 10 words.",
+    pause: "Generate a short, hype pause line. Tone: intense, demanding. Max 10 words.",
+    resume: "Generate a short, explosive resume line. Tone: hype, commanding. Max 10 words.",
+  },
+  SPECTER: {
+    start_standard: "Generate a short, analytical run start line. Tone: precise, data-driven. Max 10 words.",
+    start_ghost: "Generate a short, tactical ghost run start line. Tone: analytical, strategic. Max 10 words.",
+    start_waiting: "Generate a short, technical waiting for GPS line. Tone: analytical, calm. Max 10 words.",
+    pause: "Generate a short, measured pause line. Tone: analytical, controlled. Max 10 words.",
+    resume: "Generate a short, precise resume line. Tone: analytical, directive. Max 10 words.",
+  },
+};
+
 function hasWindow() {
   return typeof window !== "undefined";
 }
@@ -183,8 +217,38 @@ function metersText(value?: number) {
   return rounded > 0 ? `+${rounded}m` : `${rounded}m`;
 }
 
-function getApiKey() {
-  return import.meta.env.VITE_DEEPSEEK_API_KEY?.trim();
+function getDashScopeApiKey() {
+  return import.meta.env.VITE_DASHSCOPE_API_KEY?.trim();
+}
+
+function getDashScopeModel() {
+  return import.meta.env.VITE_DASHSCOPE_MODEL?.trim() || DEFAULT_DASHSCOPE_MODEL;
+}
+
+async function requestDashScopeChat(messages: Array<{ role: "system" | "user"; content: string }>, maxTokens: number) {
+  const apiKey = getDashScopeApiKey();
+  if (!apiKey) return null;
+
+  const response = await fetch(DASHSCOPE_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: getDashScopeModel(),
+      temperature: 1,
+      max_tokens: maxTokens,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = await response.json();
+  return data?.choices?.[0]?.message?.content ?? null;
 }
 
 function shouldSkipEvent(event: EventName) {
@@ -279,7 +343,7 @@ export async function generateCoachLine(context: CoachRequestContext) {
   if (shouldSkipEvent(context.event)) return null;
 
   const fallback = getCoachMessage(context.coachAlias, context.event);
-  const apiKey = getApiKey();
+  const apiKey = getDashScopeApiKey();
 
   if (!apiKey || inFlight) {
     if (fallback) markEvent(context.event);
@@ -290,30 +354,17 @@ export async function generateCoachLine(context: CoachRequestContext) {
 
   try {
     const { system, user } = buildMessages(context);
-    const response = await fetch(DEEPSEEK_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        temperature: 1,
-        max_tokens: 60,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-      }),
-    });
+    const rawText = await requestDashScopeChat([
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ], 60);
 
-    if (!response.ok) {
+    if (!rawText) {
       if (fallback) markEvent(context.event);
       return fallback;
     }
 
-    const data = await response.json();
-    const text = sanitizeMessage(data?.choices?.[0]?.message?.content);
+    const text = sanitizeMessage(rawText);
     if (!text) {
       if (fallback) markEvent(context.event);
       return fallback;
@@ -331,58 +382,40 @@ export async function generateCoachLine(context: CoachRequestContext) {
 
 export async function generateCustomCoachPersona(input: CustomPersonaInput) {
   const fallback = buildLocalCustomPersona(input);
-  const apiKey = getApiKey();
+  const apiKey = getDashScopeApiKey();
 
   if (!apiKey) {
     return fallback;
   }
 
   try {
-    const response = await fetch(DEEPSEEK_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const raw = await requestDashScopeChat([
+      {
+        role: "system",
+        content: [
+          "You design custom AI running coach personas for a frontend running app.",
+          "Return JSON only.",
+          'Schema: {"summary":"string","prompt":"string","voiceStyle":"gentle|harsh|hype|analytic"}.',
+          "summary: 8 to 18 Chinese or English words, user-facing, concise.",
+          "prompt: 60 to 140 words, instruction text for future live spoken coaching.",
+          "voiceStyle: pick the closest one from gentle, harsh, hype, analytic.",
+          "The prompt must preserve the base coach identity while adapting to the user request.",
+          "The prompt must instruct the coach to speak in short live TTS-friendly lines.",
+          "Do not include markdown fences.",
+        ].join(" "),
       },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        temperature: 1,
-        max_tokens: 220,
-        messages: [
-          {
-            role: "system",
-            content: [
-              "You design custom AI running coach personas for a frontend running app.",
-              "Return JSON only.",
-              'Schema: {"summary":"string","prompt":"string","voiceStyle":"gentle|harsh|hype|analytic"}.',
-              "summary: 8 to 18 Chinese or English words, user-facing, concise.",
-              "prompt: 60 to 140 words, instruction text for future live spoken coaching.",
-              "voiceStyle: pick the closest one from gentle, harsh, hype, analytic.",
-              "The prompt must preserve the base coach identity while adapting to the user request.",
-              "The prompt must instruct the coach to speak in short live TTS-friendly lines.",
-              "Do not include markdown fences.",
-            ].join(" "),
-          },
-          {
-            role: "user",
-            content: [
-              `Coach alias: ${input.coachAlias}.`,
-              `Coach name: ${input.coachName}.`,
-              `Base style: ${input.baseStyle}.`,
-              `Runner request: ${String(input.userRequest || "").trim()}.`,
-              "Generate a custom running coach persona now.",
-            ].join(" "),
-          },
-        ],
-      }),
-    });
+      {
+        role: "user",
+        content: [
+          `Coach alias: ${input.coachAlias}.`,
+          `Coach name: ${input.coachName}.`,
+          `Base style: ${input.baseStyle}.`,
+          `Runner request: ${String(input.userRequest || "").trim()}.`,
+          "Generate a custom running coach persona now.",
+        ].join(" "),
+      },
+    ], 220);
 
-    if (!response.ok) {
-      return fallback;
-    }
-
-    const data = await response.json();
-    const raw = data?.choices?.[0]?.message?.content;
     if (!raw) {
       return fallback;
     }
@@ -397,6 +430,50 @@ export async function generateCustomCoachPersona(input: CustomPersonaInput) {
   }
 }
 
+export async function generateLifecycleLine(
+  coachAlias: string,
+  event: "start_standard" | "start_ghost" | "start_waiting" | "pause" | "resume",
+): Promise<string> {
+  const alias = coachAlias.toUpperCase();
+  if (!["DREDD", "KIRA", "TITAN", "SPECTER"].includes(alias)) {
+    return lifecycleMessages.DREDD[event];
+  }
+
+  const cacheKey = `${alias}_${event}`;
+  if (lifecycleCache[cacheKey]) {
+    return lifecycleCache[cacheKey];
+  }
+
+  const apiKey = getDashScopeApiKey();
+  if (!apiKey) {
+    return lifecycleMessages[alias]?.[event] ?? lifecycleMessages.DREDD[event];
+  }
+
+  const persona = personaPrompts[alias] || personaPrompts.DREDD;
+  const prompt = lifecyclePromptTemplates[alias]?.[event] || lifecyclePromptTemplates.DREDD[event];
+
+  try {
+    const rawText = await requestDashScopeChat([
+      { role: "system", content: `${persona} ${prompt}` },
+      { role: "user", content: "Generate the coaching line now." },
+    ], 30);
+
+    if (!rawText) {
+      return lifecycleMessages[alias]?.[event] ?? lifecycleMessages.DREDD[event];
+    }
+
+    const text = sanitizeMessage(rawText);
+    if (text) {
+      lifecycleCache[cacheKey] = text;
+      return text;
+    }
+
+    return lifecycleMessages[alias]?.[event] ?? lifecycleMessages.DREDD[event];
+  } catch {
+    return lifecycleMessages[alias]?.[event] ?? lifecycleMessages.DREDD[event];
+  }
+}
+
 export function getCoachLifecycleLine(
   coachAlias: string,
   event: "start_standard" | "start_ghost" | "start_waiting" | "pause" | "resume",
@@ -408,6 +485,7 @@ export function resetAiCoachSession() {
   eventMemory.clear();
   lastAnnouncementAt = 0;
   inFlight = false;
+  Object.keys(lifecycleCache).forEach((key) => delete lifecycleCache[key]);
 }
 
 export function getGapBucket(gap: number) {
