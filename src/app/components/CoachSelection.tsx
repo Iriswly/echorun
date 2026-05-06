@@ -7,7 +7,7 @@ import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
 import { getStorageKey } from "../../utils/auth.js";
 import { generateCustomCoachPersona, voiceStyleToCoachAlias } from "../../utils/aiCoach";
-import { getAudioStatus, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
+import { designCustomVoice, getAudioStatus, playCustomVoicePreview, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
 
 const coaches = [
   {
@@ -133,6 +133,9 @@ export function CoachSelection() {
   const [customPersonaPrompt, setCustomPersonaPrompt] = useState("");
   const [customPersonaSummary, setCustomPersonaSummary] = useState("");
   const [customVoiceStyle, setCustomVoiceStyle] = useState("gentle");
+  const [customVoiceName, setCustomVoiceName] = useState("");
+  const [customVoicePreviewText, setCustomVoicePreviewText] = useState("");
+  const [customTtsModel, setCustomTtsModel] = useState("");
   const [personaLoading, setPersonaLoading] = useState(false);
   const [personaError, setPersonaError] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -180,6 +183,9 @@ export function CoachSelection() {
         setCustomPersonaPrompt(stored.customPersonaPrompt || "");
         setCustomPersonaSummary(stored.customPersonaSummary || "");
         setCustomVoiceStyle(stored.voiceStyle || "gentle");
+        setCustomVoiceName(stored.customVoiceName || stored.ttsVcn || "");
+        setCustomVoicePreviewText(stored.customVoicePreviewText || "");
+        setCustomTtsModel(stored.customTtsModel || "");
       } else if (storedCoachIdx >= 0) {
         setSelectedIdx(storedCoachIdx);
         setTimeout(() => scrollToCard(storedCoachIdx), 100);
@@ -210,6 +216,25 @@ export function CoachSelection() {
     setSelectedIdx(closestIndex);
   };
 
+  const buildCustomPreviewText = (request: string) => (
+    /[\u4e00-\u9fff]/.test(request)
+      ? "这是你的专属教练声音。"
+      : "This is your custom coach voice."
+  );
+
+  const buildPreferredVoiceName = (request: string) => {
+    const normalized = String(request || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    if (normalized) {
+      return normalized.slice(0, 16);
+    }
+
+    return `coach_${Date.now().toString().slice(-8)}`.slice(0, 16);
+  };
+
   const customBaseCoach = coaches[0];
   const customCard = {
     id: CUSTOM_CARD_ID,
@@ -217,13 +242,13 @@ export function CoachSelection() {
     alias: "CUSTOM",
     style: "AI Tailored",
     vibe: "Make It Yours",
-    description: "Describe the tone you want and turn it into a dedicated coach personality.",
+    description: "Describe the voice you want and turn it into a dedicated coach voice.",
     color: "#2563EB",
     secondaryColor: "#1D4ED8",
     glowColor: "rgba(37,99,235,0.22)",
     gradient: "linear-gradient(160deg, #EFF6FF 0%, #F7F8FA 100%)",
     borderColor: "#93C5FD",
-    sample: customPersonaSummary || "Describe the voice you want, then generate a custom coach persona.",
+    sample: customPersonaSummary || "Describe the voice you want, then generate a custom coach voice.",
     avatar: "",
     emoji: "AI",
     isCustom: true,
@@ -233,27 +258,56 @@ export function CoachSelection() {
   const isCustomSelected = selectedCoach.id === CUSTOM_CARD_ID;
   const levelInfo = profile ? getLevelInfo(profile.totalPoints) : null;
 
-  const handleGeneratePersona = async () => {
+  const handleGenerateVoice = async () => {
     const trimmed = customRequest.trim();
     if (!trimmed) {
-      setPersonaError("Describe the coach you want first.");
+      setPersonaError("Describe the voice you want first.");
       return;
     }
 
     setPersonaLoading(true);
     setPersonaError("");
+    setCustomVoiceName("");
+    setCustomVoicePreviewText("");
+    setCustomTtsModel("");
 
-    const generated = await generateCustomCoachPersona({
-      coachAlias: customBaseCoach.alias,
-      coachName: customBaseCoach.name,
-      baseStyle: customBaseCoach.style,
-      userRequest: trimmed,
-    });
+    try {
+      const previewText = buildCustomPreviewText(trimmed);
+      const [generatedPersona, generatedVoice] = await Promise.all([
+        generateCustomCoachPersona({
+          coachAlias: customBaseCoach.alias,
+          coachName: customBaseCoach.name,
+          baseStyle: customBaseCoach.style,
+          userRequest: trimmed,
+        }),
+        designCustomVoice({
+          voicePrompt: trimmed,
+          preferredName: buildPreferredVoiceName(trimmed),
+          previewText,
+          targetModel: "qwen3-tts-vd-2026-01-26",
+        }),
+      ]);
 
-    setCustomPersonaPrompt(generated.prompt);
-    setCustomPersonaSummary(generated.summary);
-    setCustomVoiceStyle(generated.voiceStyle || "gentle");
-    setPersonaLoading(false);
+      if (!generatedVoice?.voiceName) {
+        throw new Error("Voice design did not return a voice name.");
+      }
+
+      setCustomPersonaPrompt(generatedPersona.prompt);
+      setCustomPersonaSummary(generatedPersona.summary);
+      setCustomVoiceStyle(generatedPersona.voiceStyle || "gentle");
+      setCustomVoiceName(generatedVoice.voiceName);
+      setCustomVoicePreviewText(generatedVoice.previewText || previewText);
+      setCustomTtsModel(generatedVoice.targetModel || "qwen3-tts-vd-2026-01-26");
+
+      if (generatedVoice.previewAudioData) {
+        stopSpeech();
+        await playCustomVoicePreview(generatedVoice.previewAudioData, generatedVoice.responseFormat || "wav");
+      }
+    } catch (error) {
+      setPersonaError(error instanceof Error ? error.message : "Voice generation failed.");
+    } finally {
+      setPersonaLoading(false);
+    }
   };
 
   return (
@@ -446,9 +500,18 @@ export function CoachSelection() {
                       <>
                         <textarea
                           value={customRequest}
-                          onChange={(event) => setCustomRequest(event.target.value)}
+                          onChange={(event) => {
+                            const nextValue = event.target.value;
+                            setCustomRequest(nextValue);
+                            setPersonaError("");
+                            setCustomPersonaPrompt("");
+                            setCustomPersonaSummary("");
+                            setCustomVoiceName("");
+                            setCustomVoicePreviewText("");
+                            setCustomTtsModel("");
+                          }}
                           onClick={(event) => event.stopPropagation()}
-                          placeholder="I want a gentle coach who celebrates progress and gives short practical cues."
+                          placeholder="I want a calm, encouraging voice that sounds like a steady running partner."
                           rows={3}
                           className="w-full rounded-xl px-3 py-3 outline-none resize-none mb-3"
                           style={{ border: "1px solid #E5E7EB", background: "#F9FAFB", fontSize: "12px", color: "#111827", lineHeight: 1.45 }}
@@ -457,13 +520,13 @@ export function CoachSelection() {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
-                            handleGeneratePersona();
+                            handleGenerateVoice();
                           }}
                           disabled={personaLoading}
                           className="w-full py-3 rounded-xl transition-all active:scale-95"
                           style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}`, color: coach.color, fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em", opacity: personaLoading ? 0.75 : 1 }}
                         >
-                          {personaLoading ? "GENERATING..." : "GENERATE CUSTOM PERSONA"}
+                          {personaLoading ? "GENERATING..." : "GENERATE CUSTOM VOICE"}
                         </button>
 
                         {personaError && isActive && (
@@ -474,8 +537,13 @@ export function CoachSelection() {
 
                         {customPersonaSummary && (
                           <div className="mt-3 px-3 py-2.5 rounded-xl" style={{ background: `${coach.color}10`, border: `1px solid ${coach.borderColor}` }}>
-                            <div style={{ fontSize: "9px", color: coach.color, fontWeight: 800, letterSpacing: "0.12em", marginBottom: "4px" }}>PERSONA READY</div>
+                            <div style={{ fontSize: "9px", color: coach.color, fontWeight: 800, letterSpacing: "0.12em", marginBottom: "4px" }}>VOICE READY</div>
                             <div style={{ fontSize: "12px", color: "#111827", fontWeight: 700, lineHeight: 1.35 }}>{customPersonaSummary}</div>
+                            {customVoiceName && (
+                              <div style={{ fontSize: "10px", color: "#6B7280", marginTop: "6px" }}>
+                                {customVoiceName}
+                              </div>
+                            )}
                           </div>
                         )}
                       </>
@@ -534,12 +602,12 @@ export function CoachSelection() {
               </span>
             </motion.div>
           ) : (
-            <motion.button
+              <motion.button
               initial={{ opacity: 1 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => {
-                if (isCustomSelected && !customPersonaPrompt.trim()) {
-                  setPersonaError("Generate the custom persona card before confirming it.");
+                if (isCustomSelected && (!customPersonaPrompt.trim() || !customVoiceName.trim())) {
+                  setPersonaError("Generate the custom voice card before confirming it.");
                   return;
                 }
 
@@ -555,6 +623,9 @@ export function CoachSelection() {
                         customStyleRequest: customRequest.trim(),
                         customPersonaPrompt,
                         customPersonaSummary,
+                        customVoiceName,
+                        customVoicePreviewText,
+                        customTtsModel,
                         voiceStyle: customVoiceStyle,
                       }
                     : {

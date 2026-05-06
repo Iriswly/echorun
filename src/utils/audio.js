@@ -2,6 +2,9 @@ import { getStorageKey } from "./auth.js";
 
 const AUDIO_ENABLED_KEY = "ECHORUN_AUDIO_ENABLED";
 const XFYUN_TTS_URL = "wss://tts-api.xfyun.cn/v2/tts";
+const DASHSCOPE_DEFAULT_BASE_URL = import.meta.env.VITE_DASHSCOPE_API_BASE_URL?.trim() || "https://dashscope.aliyuncs.com/api/v1";
+const QWEN_VOICE_DESIGN_MODEL = "qwen-voice-design";
+const QWEN_TTS_VD_MODEL = "qwen3-tts-vd-2026-01-26";
 
 export const COACH_VOICE_SETTINGS = {
   DREDD: { vcn: "x4_enuk_george_assist", rate: 50, pitch: 45, volume: 70 },
@@ -38,9 +41,20 @@ function getXfyunConfig() {
   };
 }
 
+function getDashScopeConfig() {
+  return {
+    apiKey: import.meta.env.VITE_DASHSCOPE_API_KEY?.trim(),
+    baseUrl: DASHSCOPE_DEFAULT_BASE_URL.replace(/\/$/, ""),
+  };
+}
+
 function isXfyunConfigured() {
   const { appId, apiKey, apiSecret } = getXfyunConfig();
   return !!(appId && apiKey && apiSecret);
+}
+
+function isDashScopeConfigured() {
+  return !!getDashScopeConfig().apiKey;
 }
 
 export function isSpeechSupported() {
@@ -50,6 +64,131 @@ export function isSpeechSupported() {
 export function isAudioEnabled() {
   if (!hasWindow()) return true;
   return localStorage.getItem(getStorageKey(AUDIO_ENABLED_KEY)) !== "false";
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function inferLanguageType(text) {
+  const value = String(text || "");
+  if (/[\u4e00-\u9fff]/.test(value)) return "Chinese";
+  if (/[ぁ-んァ-ン]/.test(value)) return "Japanese";
+  if (/[가-힣]/.test(value)) return "Korean";
+  return "English";
+}
+
+function inferPreviewText(voicePrompt) {
+  return /[\u4e00-\u9fff]/.test(String(voicePrompt || ""))
+    ? "这是你的专属教练声音。"
+    : "This is your custom coach voice.";
+}
+
+function inferMimeType(format) {
+  const value = String(format || "").toLowerCase();
+  if (value.includes("wav")) return "audio/wav";
+  if (value.includes("ogg")) return "audio/ogg";
+  return "audio/mpeg";
+}
+
+async function requestDashScopeJson(path, payload) {
+  const { apiKey, baseUrl } = getDashScopeConfig();
+  if (!apiKey) {
+    throw new Error("DASHSCOPE_API_KEY is missing.");
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error?.message || `DASHSCOPE_${response.status}`);
+  }
+
+  return data;
+}
+
+async function playAudioUrl(audioUrl, options = {}) {
+  const { onStart, onEnd, onError, cleanup } = options;
+  const audio = new Audio(audioUrl);
+  currentAudio = audio;
+  const isIntentionalAudioStop = () => intentionallyStoppedAudio.has(audio);
+
+  audio.onplay = () => {
+    intentionallyStoppedAudio.delete(audio);
+    speaking = true;
+    lastError = null;
+    onStart?.();
+    notifyAudioStatus();
+  };
+
+  audio.onended = () => {
+    intentionallyStoppedAudio.delete(audio);
+    speaking = false;
+    cleanup?.();
+    if (currentAudio === audio) currentAudio = null;
+    onEnd?.();
+    notifyAudioStatus();
+  };
+
+  audio.onerror = () => {
+    const intentional = isIntentionalAudioStop();
+    intentionallyStoppedAudio.delete(audio);
+    speaking = false;
+    cleanup?.();
+    if (currentAudio === audio) currentAudio = null;
+    if (intentional) {
+      lastError = null;
+      onEnd?.();
+      notifyAudioStatus();
+      return;
+    }
+    lastError = "Audio playback failed.";
+    onError?.(lastError);
+    notifyAudioStatus();
+  };
+
+  try {
+    await audio.play();
+    return true;
+  } catch (error) {
+    const intentional = isIntentionalAudioStop();
+    cleanup?.();
+    intentionallyStoppedAudio.delete(audio);
+    speaking = false;
+    if (currentAudio === audio) currentAudio = null;
+    if (intentional) {
+      lastError = null;
+      onEnd?.();
+      notifyAudioStatus();
+      return false;
+    }
+    const message = error instanceof Error ? error.message : "Audio playback failed.";
+    lastError = message;
+    onError?.(lastError);
+    notifyAudioStatus();
+    return false;
+  }
+}
+
+async function playAudioBytes(audioBytes, mimeType = "audio/mpeg", options = {}) {
+  const blob = new Blob([audioBytes], { type: mimeType });
+  const audioUrl = URL.createObjectURL(blob);
+  return playAudioUrl(audioUrl, {
+    ...options,
+    cleanup: () => URL.revokeObjectURL(audioUrl),
+  });
 }
 
 function readStoredCoachConfig() {
@@ -287,8 +426,75 @@ async function requestSpeechAudio(text, voiceProfile) {
   });
 }
 
+async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = QWEN_TTS_VD_MODEL }) {
+  const response = await requestDashScopeJson("/services/audio/tts/customization", {
+    model: QWEN_VOICE_DESIGN_MODEL,
+    input: {
+      action: "create",
+      target_model: targetModel,
+      voice_prompt: voicePrompt,
+      preview_text: previewText || inferPreviewText(voicePrompt),
+      preferred_name: preferredName || "EchoRun Custom Voice",
+    },
+    parameters: {
+      sample_rate: 24000,
+      response_format: "wav",
+    },
+  });
+
+  const output = response?.output ?? {};
+  const previewAudio = output.preview_audio ?? {};
+  return {
+    voiceName: output.voice || output.voice_name || "",
+    targetModel: output.target_model || targetModel,
+    previewText: previewText || inferPreviewText(voicePrompt),
+    previewAudioData: previewAudio.data || output.data || "",
+    responseFormat: previewAudio.response_format || output.response_format || "wav",
+    sampleRate: previewAudio.sample_rate || output.sample_rate || 24000,
+  };
+}
+
+async function requestDashScopeSynthesis(text, voiceName, options = {}) {
+  const response = await requestDashScopeJson("/services/aigc/multimodal-generation/generation", {
+    model: options.model || QWEN_TTS_VD_MODEL,
+    input: {
+      text,
+      voice: voiceName,
+      language_type: options.languageType || inferLanguageType(text),
+    },
+  });
+
+  const output = response?.output ?? {};
+  const audio = output.audio ?? {};
+  return {
+    audioUrl: audio.url || "",
+    audioData: audio.data || "",
+    responseFormat: audio.response_format || output.response_format || "",
+  };
+}
+
+export async function designCustomVoice({ voicePrompt, preferredName, previewText, targetModel }) {
+  return requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel });
+}
+
+export async function synthesizeCustomVoice(text, voiceName, options = {}) {
+  return requestDashScopeSynthesis(text, voiceName, options);
+}
+
+export async function playCustomVoicePreview(previewAudioData, responseFormat = "wav", options = {}) {
+  if (!previewAudioData) return false;
+  if (!isAudioEnabled()) {
+    options.onEnd?.();
+    return false;
+  }
+  return playAudioBytes(base64ToUint8Array(previewAudioData), inferMimeType(responseFormat), options);
+}
+
 export async function speakMessage(text, options = {}) {
   const { coachAlias = "DREDD", interrupt = true, onStart, onEnd, onError } = options;
+  const stored = readStoredCoachConfig();
+  const shouldUseCustomDashScopeVoice =
+    !!stored?.customVoiceName && (coachAlias === "CUSTOM" || stored?.alias === "CUSTOM");
 
   if (!isAudioEnabled()) {
     onEnd?.();
@@ -302,63 +508,49 @@ export async function speakMessage(text, options = {}) {
     return false;
   }
 
-  if (!isXfyunConfigured()) {
-    lastError = "XFYUN TTS credentials are missing.";
-    onError?.(lastError);
-    notifyAudioStatus();
-    return false;
-  }
-
   try {
     if (interrupt) stopSpeech();
 
-    const voiceProfile = resolveVoiceProfile(coachAlias, options);
-    const audioBytes = await requestSpeechAudio(text, voiceProfile);
-    const audioBlob = new Blob([audioBytes], { type: "audio/mpeg" });
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    currentAudio = audio;
-    const isIntentionalAudioStop = () => intentionallyStoppedAudio.has(audio);
-
-    audio.onplay = () => {
-      intentionallyStoppedAudio.delete(audio);
-      speaking = true;
-      lastError = null;
-      onStart?.();
-      notifyAudioStatus();
-    };
-
-    audio.onended = () => {
-      intentionallyStoppedAudio.delete(audio);
-      speaking = false;
-      URL.revokeObjectURL(audioUrl);
-      if (currentAudio === audio) currentAudio = null;
-      onEnd?.();
-      notifyAudioStatus();
-    };
-
-    audio.onerror = () => {
-      const intentional = isIntentionalAudioStop();
-      intentionallyStoppedAudio.delete(audio);
-      speaking = false;
-      URL.revokeObjectURL(audioUrl);
-      if (currentAudio === audio) currentAudio = null;
-      if (intentional) {
-        lastError = null;
-        onEnd?.();
+    if (shouldUseCustomDashScopeVoice) {
+      if (!isDashScopeConfigured()) {
+        lastError = "DASHSCOPE_API_KEY is missing.";
+        onError?.(lastError);
         notifyAudioStatus();
-        return;
+        return false;
       }
-      lastError = "XFYUN audio playback failed.";
+
+      const synthesis = await requestDashScopeSynthesis(text, stored.customVoiceName, {
+        model: stored.customTtsModel || QWEN_TTS_VD_MODEL,
+      });
+
+      if (synthesis.audioUrl) {
+        return playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
+      }
+
+      if (synthesis.audioData) {
+        return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
+          onStart,
+          onEnd,
+          onError,
+        });
+      }
+
+      throw new Error("DASHSCOPE_AUDIO_EMPTY");
+    }
+
+    if (!isXfyunConfigured()) {
+      lastError = "XFYUN TTS credentials are missing.";
       onError?.(lastError);
       notifyAudioStatus();
-    };
+      return false;
+    }
 
-    await audio.play();
-    return true;
+    const voiceProfile = resolveVoiceProfile(coachAlias, options);
+    const audioBytes = await requestSpeechAudio(text, voiceProfile);
+    return playAudioBytes(audioBytes, "audio/mpeg", { onStart, onEnd, onError });
   } catch (error) {
     speaking = false;
-    const message = error instanceof Error ? error.message : "XFYUN TTS failed.";
+    const message = error instanceof Error ? error.message : shouldUseCustomDashScopeVoice ? "DASHSCOPE TTS failed." : "XFYUN TTS failed.";
     const isExpectedInterrupt =
       message === "XFYUN TTS request was interrupted." ||
       message === "The play() request was interrupted by a call to pause()." ||

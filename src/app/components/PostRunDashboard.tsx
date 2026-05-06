@@ -32,9 +32,9 @@ function saveStoredFriends(friends: any[]) {
 function createDemoFriendRun(name: string, accent: string) {
   const now = Date.now();
   const presets = [
-    { title: `${name}'s Sunset 4K`, distance: 4020, duration: 1220, avgPace: 303 },
-    { title: `${name}'s Tempo 5K`, distance: 5000, duration: 1460, avgPace: 292 },
-    { title: `${name}'s Lunch Break 3K`, distance: 3180, duration: 960, avgPace: 302 },
+    { title: `${name}'s Test Dash 120m`, distance: 120, duration: 36, avgPace: 300 },
+    { title: `${name}'s Test Tempo 180m`, distance: 180, duration: 54, avgPace: 300 },
+    { title: `${name}'s Test Sprint 240m`, distance: 240, duration: 66, avgPace: 275 },
   ];
   const preset = presets[now % presets.length];
   return {

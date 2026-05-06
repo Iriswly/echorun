@@ -2,7 +2,7 @@ import { getStorageKey } from "./auth.js";
 
 const RUNS_KEY = "ECHORUN_RUNS";
 const MOCK_VERSION_KEY = "ECHORUN_MOCK_RUNS_VERSION";
-const MOCK_VERSION = "ghost-v2";
+const MOCK_VERSION = "ghost-v3";
 
 function createDistanceSeries(totalDistance, splits) {
   const series = [{ t: 0, d: 0 }];
@@ -42,20 +42,18 @@ function createMockRuns() {
       mode: "standard",
       source: "self",
       runnerName: "You",
-      title: "Last 1K Benchmark",
-      distance: 1000,
-      duration: 285,
-      avgPace: 285,
+      title: "Last 120m Benchmark",
+      distance: 120,
+      duration: 36,
+      avgPace: 300,
       pointsEarned: 120,
       date: new Date(now - 1000 * 60 * 60 * 24).toISOString(),
       savedAt: new Date(now - 1000 * 60 * 60 * 24).toISOString(),
       isMock: true,
-      distanceSeries: createDistanceSeries(1000, [
-        { duration: 60, distanceGain: 180 },
-        { duration: 60, distanceGain: 220 },
-        { duration: 60, distanceGain: 215 },
-        { duration: 60, distanceGain: 210 },
-        { duration: 45, distanceGain: 175 },
+      distanceSeries: createDistanceSeries(120, [
+        { duration: 12, distanceGain: 34 },
+        { duration: 12, distanceGain: 42 },
+        { duration: 12, distanceGain: 44 },
       ]),
     },
     {
@@ -63,25 +61,18 @@ function createMockRuns() {
       mode: "standard",
       source: "friend",
       runnerName: "Mika",
-      title: "Friend Long Run 10K",
-      distance: 10000,
-      duration: 2940,
-      avgPace: 294,
+      title: "Friend Quick Dash 180m",
+      distance: 180,
+      duration: 54,
+      avgPace: 300,
       pointsEarned: 0,
       date: new Date(now - 1000 * 60 * 60 * 36).toISOString(),
       savedAt: new Date(now - 1000 * 60 * 60 * 36).toISOString(),
       isMock: true,
-      distanceSeries: createDistanceSeries(10000, [
-        { duration: 300, distanceGain: 980 },
-        { duration: 300, distanceGain: 1010 },
-        { duration: 300, distanceGain: 1000 },
-        { duration: 300, distanceGain: 1040 },
-        { duration: 300, distanceGain: 1010 },
-        { duration: 300, distanceGain: 990 },
-        { duration: 300, distanceGain: 1005 },
-        { duration: 300, distanceGain: 995 },
-        { duration: 300, distanceGain: 985 },
-        { duration: 240, distanceGain: 985 },
+      distanceSeries: createDistanceSeries(180, [
+        { duration: 18, distanceGain: 56 },
+        { duration: 18, distanceGain: 60 },
+        { duration: 18, distanceGain: 64 },
       ]),
     },
     {
@@ -89,22 +80,18 @@ function createMockRuns() {
       mode: "standard",
       source: "friend",
       runnerName: "Leo",
-      title: "Friend Fast 5K",
-      distance: 5000,
-      duration: 1260,
-      avgPace: 252,
+      title: "Friend Sprint 240m",
+      distance: 240,
+      duration: 66,
+      avgPace: 275,
       pointsEarned: 0,
       date: new Date(now - 1000 * 60 * 60 * 52).toISOString(),
       savedAt: new Date(now - 1000 * 60 * 60 * 52).toISOString(),
       isMock: true,
-      distanceSeries: createDistanceSeries(5000, [
-        { duration: 180, distanceGain: 740 },
-        { duration: 180, distanceGain: 710 },
-        { duration: 180, distanceGain: 720 },
-        { duration: 180, distanceGain: 705 },
-        { duration: 180, distanceGain: 720 },
-        { duration: 180, distanceGain: 700 },
-        { duration: 180, distanceGain: 705 },
+      distanceSeries: createDistanceSeries(240, [
+        { duration: 22, distanceGain: 78 },
+        { duration: 22, distanceGain: 80 },
+        { duration: 22, distanceGain: 82 },
       ]),
     },
   ];

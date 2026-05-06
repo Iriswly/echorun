@@ -17,9 +17,9 @@ type LngLatTuple = [number, number];
 type DistancePoint = { t: number; d: number };
 
 function ghostStatusText(gap: number): string {
-  if (gap > 50) return "You're pulling away from the ghost.";
+  if (gap > 5) return "You're pulling away from the ghost.";
   if (gap > 0) return "You're slightly ahead. Keep the rhythm.";
-  if (gap > -50) return "The ghost is just ahead. You can catch it.";
+  if (gap > -5) return "The ghost is just ahead. You can catch it.";
   return "The ghost is escaping. Time to push.";
 }
 
@@ -94,7 +94,7 @@ function ResultCard({
       ? `You beat the ghost by ${absFinalGap}m`
       : result === "lose"
         ? `The ghost beat you by ${absFinalGap}m`
-        : "Gap within 5m, almost identical.";
+        : "Gap within 3m, almost identical.";
 
   const badgeObjs = newBadges.map((id) => ALL_BADGES.find((badge) => badge.id === id)).filter(Boolean);
 
@@ -307,23 +307,23 @@ export function GhostRunTracking() {
     if (phase !== "running") return;
 
     const milestone = milestoneRef.current;
-    if (!milestone.m500 && distance >= 500) {
+    if (!milestone.m500 && distance >= 50) {
       milestone.m500 = true;
       triggerMsg("distance_500m");
     }
-    if (!milestone.m1k && distance >= 1000) {
+    if (!milestone.m1k && distance >= 100) {
       milestone.m1k = true;
       triggerMsg("distance_1km");
     }
-    if (!milestone.m2k && distance >= 2000) {
+    if (!milestone.m2k && distance >= 200) {
       milestone.m2k = true;
       triggerMsg("distance_2km");
     }
-    if (!milestone.t5 && elapsed >= 300) {
+    if (!milestone.t5 && elapsed >= 30) {
       milestone.t5 = true;
       triggerMsg("time_5min");
     }
-    if (!milestone.t10 && elapsed >= 600) {
+    if (!milestone.t10 && elapsed >= 60) {
       milestone.t10 = true;
       triggerMsg("time_10min");
     }
@@ -451,7 +451,7 @@ export function GhostRunTracking() {
 
     const profile = getProfile();
     if (isGhostMode) {
-      const outcome: "win" | "lose" | "tie" = gap > 5 ? "win" : gap < -5 ? "lose" : "tie";
+      const outcome: "win" | "lose" | "tie" = gap > 3 ? "win" : gap < -3 ? "lose" : "tie";
       const runResult = { mode: "ghost" as const, distance, duration: elapsed, avgPace: pace, finalGap: gap, result: outcome, wasBehinDuringRun };
       const pointsEarned = calculateRunPoints(runResult);
       const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });

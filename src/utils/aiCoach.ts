@@ -41,16 +41,16 @@ type VoiceStyle = "gentle" | "harsh" | "hype" | "analytic";
 const DASHSCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const DEFAULT_DASHSCOPE_MODEL = "qwen-plus";
 const COACH_STORAGE_KEY = "ECHORUN_COACH";
-const GLOBAL_COOLDOWN_MS = 5000;
+const GLOBAL_COOLDOWN_MS = 2000;
 const EVENT_COOLDOWN_MS: Record<EventName, number> = {
-  ahead_50: 12000,
-  ahead_100: 12000,
-  ahead_200: 18000,
-  behind_50: 12000,
-  behind_100: 12000,
-  behind_200: 18000,
-  new_lead: 10000,
-  lost_lead: 10000,
+  ahead_50: 3000,
+  ahead_100: 3000,
+  ahead_200: 4000,
+  behind_50: 3000,
+  behind_100: 3000,
+  behind_200: 4000,
+  new_lead: 2500,
+  lost_lead: 2500,
   distance_500m: 0,
   distance_1km: 0,
   distance_2km: 0,
@@ -193,11 +193,11 @@ const eventDescriptions: Record<EventName, string> = {
   behind_200: "The runner just crossed into a critical deficit behind the ghost.",
   new_lead: "The runner just moved from trailing or even into the lead.",
   lost_lead: "The runner just lost the lead to the ghost.",
-  distance_500m: "The runner just passed the 500 meter milestone.",
-  distance_1km: "The runner just passed the 1 kilometer milestone.",
-  distance_2km: "The runner just passed the 2 kilometer milestone.",
-  time_5min: "The run just reached the 5 minute mark.",
-  time_10min: "The run just reached the 10 minute mark.",
+  distance_500m: "The runner just passed the 50 meter milestone.",
+  distance_1km: "The runner just passed the 100 meter milestone.",
+  distance_2km: "The runner just passed the 200 meter milestone.",
+  time_5min: "The run just reached the 30 second mark.",
+  time_10min: "The run just reached the 60 second mark.",
 };
 
 const eventMemory = new Map<string, number>();
@@ -489,17 +489,17 @@ export function resetAiCoachSession() {
 }
 
 export function getGapBucket(gap: number) {
-  if (gap >= 200) return "ahead_200";
-  if (gap >= 100) return "ahead_100";
-  if (gap >= 50) return "ahead_50";
-  if (gap <= -200) return "behind_200";
-  if (gap <= -100) return "behind_100";
-  if (gap <= -50) return "behind_50";
+  if (gap >= 20) return "ahead_200";
+  if (gap >= 10) return "ahead_100";
+  if (gap >= 5) return "ahead_50";
+  if (gap <= -20) return "behind_200";
+  if (gap <= -10) return "behind_100";
+  if (gap <= -5) return "behind_50";
   return null;
 }
 
 export function getLeadState(gap: number) {
-  if (gap >= 15) return "ahead";
-  if (gap <= -15) return "behind";
+  if (gap >= 3) return "ahead";
+  if (gap <= -3) return "behind";
   return "even";
 }

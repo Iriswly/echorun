@@ -383,7 +383,7 @@ export function LiveRunMap({
       window.clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
-    pollTimerRef.current = window.setInterval(tick, phase === "running" ? 3000 : 5000);
+    pollTimerRef.current = window.setInterval(tick, phase === "running" ? 1000 : 2000);
     return () => {
       if (pollTimerRef.current) {
         window.clearInterval(pollTimerRef.current);
