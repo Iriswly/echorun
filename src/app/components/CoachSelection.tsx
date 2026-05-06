@@ -183,7 +183,7 @@ export function CoachSelection() {
         setCustomPersonaPrompt(stored.customPersonaPrompt || "");
         setCustomPersonaSummary(stored.customPersonaSummary || "");
         setCustomVoiceStyle(stored.voiceStyle || "gentle");
-        setCustomVoiceName(stored.customVoiceName || stored.ttsVcn || "");
+        setCustomVoiceName(stored.customVoiceName || "");
         setCustomVoicePreviewText(stored.customVoicePreviewText || "");
         setCustomTtsModel(stored.customTtsModel || "");
       } else if (storedCoachIdx >= 0) {
@@ -284,7 +284,7 @@ export function CoachSelection() {
           voicePrompt: trimmed,
           preferredName: buildPreferredVoiceName(trimmed),
           previewText,
-          targetModel: "qwen3-tts-vd-2026-01-26",
+          targetModel: "cosyvoice-v3-flash",
         }),
       ]);
 
@@ -297,7 +297,7 @@ export function CoachSelection() {
       setCustomVoiceStyle(generatedPersona.voiceStyle || "gentle");
       setCustomVoiceName(generatedVoice.voiceName);
       setCustomVoicePreviewText(generatedVoice.previewText || previewText);
-      setCustomTtsModel(generatedVoice.targetModel || "qwen3-tts-vd-2026-01-26");
+      setCustomTtsModel(generatedVoice.targetModel || "cosyvoice-v3-flash");
 
       if (generatedVoice.previewAudioData) {
         stopSpeech();

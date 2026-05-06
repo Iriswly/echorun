@@ -15,6 +15,30 @@ import { LiveRunMap } from "./LiveRunMap";
 
 type LngLatTuple = [number, number];
 type DistancePoint = { t: number; d: number };
+type PositionSource = "amap" | "browser";
+type GpsQuality = "excellent" | "good" | "fair" | "weak" | "poor";
+type TrackingDebugStatus = "standby" | "buffering" | "accepted" | "rejected";
+type TrackingDebugInfo = {
+  accuracy: number | null;
+  segmentDistance: number | null;
+  speedMps: number | null;
+  minTrackedSegmentMeters: number | null;
+  bufferDistance: number | null;
+  addedDistance: number | null;
+  gpsQuality: GpsQuality;
+  source: PositionSource | null;
+  status: TrackingDebugStatus;
+  statusReason: string;
+  sampleTime: number | null;
+};
+
+const MAX_REASONABLE_ACCURACY_METERS = 300;
+const MAX_REASONABLE_RUNNING_SPEED_MPS = 12;
+const MAX_TRACKED_SEGMENT_METERS = 300;
+const MIN_TRACKED_SEGMENT_METERS = 1.5;
+const MIN_RAW_SEGMENT_METERS = 0.75;
+const MAX_PENDING_BUFFER_AGE_MS = 8000;
+const LIVE_PACE_WINDOW_SECONDS = 10;
 
 function ghostStatusText(gap: number): string {
   if (gap > 5) return "You're pulling away from the ghost.";
@@ -42,6 +66,33 @@ function calculateSegmentDistanceMeters(from: LngLatTuple, to: LngLatTuple) {
   return earthRadius * c;
 }
 
+function getGpsQuality(accuracy?: number): GpsQuality {
+  if (typeof accuracy !== "number" || !Number.isFinite(accuracy)) return "fair";
+  if (accuracy <= 10) return "excellent";
+  if (accuracy <= 25) return "good";
+  if (accuracy <= 50) return "fair";
+  if (accuracy <= 80) return "weak";
+  return "poor";
+}
+
+function getDistanceAtOrBeforeTime(series: DistancePoint[], targetTime: number) {
+  if (!series.length) return 0;
+  if (targetTime <= series[0].t) return series[0].d;
+
+  for (let index = 1; index < series.length; index += 1) {
+    const previous = series[index - 1];
+    const current = series[index];
+    if (targetTime === current.t) return current.d;
+    if (targetTime < current.t) {
+      const span = current.t - previous.t || 1;
+      const progress = (targetTime - previous.t) / span;
+      return previous.d + (current.d - previous.d) * progress;
+    }
+  }
+
+  return series[series.length - 1].d;
+}
+
 function getDistanceAtTime(series: DistancePoint[] = [], targetTime: number, fallbackDuration = 0, fallbackDistance = 0) {
   if (!series.length) {
     if (fallbackDuration <= 0) return 0;
@@ -63,6 +114,22 @@ function getDistanceAtTime(series: DistancePoint[] = [], targetTime: number, fal
   }
 
   return series[series.length - 1].d;
+}
+
+function getRollingPace(distanceSeries: DistancePoint[], elapsed: number, currentDistance: number, windowSeconds: number) {
+  if (elapsed <= 0 || currentDistance <= 0) return 0;
+
+  const safeWindow = Math.max(4, windowSeconds);
+  const startTime = Math.max(0, elapsed - safeWindow);
+  const startDistance = getDistanceAtOrBeforeTime(distanceSeries, startTime);
+  const distanceDelta = currentDistance - startDistance;
+  const timeDelta = elapsed - startTime;
+
+  if (distanceDelta >= 20 && timeDelta > 0) {
+    return timeDelta / (distanceDelta / 1000);
+  }
+
+  return elapsed / (currentDistance / 1000);
 }
 
 function ResultCard({
@@ -249,6 +316,19 @@ export function GhostRunTracking() {
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [distanceSeries, setDistanceSeries] = useState<DistancePoint[]>([{ t: 0, d: 0 }]);
   const [audioStatus, setAudioStatus] = useState(getAudioStatus());
+  const [trackingDebug, setTrackingDebug] = useState<TrackingDebugInfo>({
+    accuracy: null,
+    segmentDistance: null,
+    speedMps: null,
+    minTrackedSegmentMeters: null,
+    bufferDistance: null,
+    addedDistance: null,
+    gpsQuality: "fair",
+    source: null,
+    status: "standby",
+    statusReason: "Waiting for location samples.",
+    sampleTime: null,
+  });
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const milestoneRef = useRef({ m500: false, m1k: false, m2k: false, t5: false, t10: false });
@@ -256,15 +336,28 @@ export function GhostRunTracking() {
   const gapBucketRef = useRef<ReturnType<typeof getGapBucket>>(null);
   const leadStateRef = useRef<ReturnType<typeof getLeadState>>("even");
   const lastTrackedPositionRef = useRef<LngLatTuple | null>(null);
+  const lastAcceptedTimestampRef = useRef<number | null>(null);
+  const lastRawPositionRef = useRef<LngLatTuple | null>(null);
+  const lastRawTimestampRef = useRef<number | null>(null);
+  const pendingDistanceRef = useRef(0);
+  const pendingStartedAtRef = useRef<number | null>(null);
+  const pendingLastPointRef = useRef<LngLatTuple | null>(null);
 
   const ghostDistance = isGhostMode && ghostRecord ? getDistanceAtTime(ghostRecord.distanceSeries || [], elapsed, ghostRecord.duration, ghostRecord.distance) : 0;
   const gap = distance - ghostDistance;
   const ghostProgress = distance > 0 ? Math.max(0, Math.min(ghostDistance / distance, 1)) : 0;
-  const pace = elapsed > 0 && distance > 0 ? elapsed / (distance / 1000) : 0;
+  const pace = getRollingPace(distanceSeries, elapsed, distance, LIVE_PACE_WINDOW_SECONDS);
+  const avgPace = elapsed > 0 && distance > 0 ? elapsed / (distance / 1000) : 0;
 
   const fmtTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
   const fmtDist = (meters: number) => (meters >= 1000 ? `${(meters / 1000).toFixed(2)}km` : `${Math.round(meters)}m`);
   const fmtPace = (seconds: number) => (seconds > 0 ? `${Math.floor(seconds / 60)}'${String(Math.floor(seconds % 60)).padStart(2, "0")}"` : "--'--\"");
+  const fmtDebugMeters = (value: number | null) => (typeof value === "number" ? `${value.toFixed(value >= 10 ? 1 : 2)}m` : "--");
+  const fmtDebugSpeed = (value: number | null) => (typeof value === "number" ? `${value.toFixed(2)} m/s` : "--");
+  const fmtDebugAccuracy = (value: number | null) => (typeof value === "number" ? `${Math.round(value)}m` : "--");
+  const fmtDebugTime = (value: number | null) => (typeof value === "number" ? new Date(value).toLocaleTimeString("zh-CN", { hour12: false }) : "--:--:--");
+  const fmtDebugSource = (value: PositionSource | null) => (value ? value.toUpperCase() : "--");
+  const fmtGpsQuality = (value: GpsQuality) => value.toUpperCase();
 
   useEffect(() => {
     const unsubscribe = subscribeAudioStatus(setAudioStatus);
@@ -379,30 +472,180 @@ export function GhostRunTracking() {
     }
   }, []);
 
-  const handlePositionChange = useCallback(({ lng, lat, accuracy }: { lng: number; lat: number; accuracy?: number; timestamp: number }) => {
+  const handlePositionChange = useCallback(({ lng, lat, accuracy, timestamp, source }: { lng: number; lat: number; accuracy?: number; timestamp: number; source: PositionSource }) => {
     const point: LngLatTuple = [lng, lat];
     setCurrentPosition(point);
+    const gpsQuality = getGpsQuality(accuracy);
+
+    const updateTrackingDebug = ({
+      status,
+      statusReason,
+      segmentDistance = null,
+      speedMps = null,
+      minTrackedSegmentMeters = null,
+      bufferDistance = null,
+      addedDistance = null,
+    }: {
+      status: TrackingDebugStatus;
+      statusReason: string;
+      segmentDistance?: number | null;
+      speedMps?: number | null;
+      minTrackedSegmentMeters?: number | null;
+      bufferDistance?: number | null;
+      addedDistance?: number | null;
+    }) => {
+      setTrackingDebug({
+        accuracy: typeof accuracy === "number" ? accuracy : null,
+        segmentDistance,
+        speedMps,
+        minTrackedSegmentMeters,
+        bufferDistance,
+        addedDistance,
+        gpsQuality,
+        source,
+        status,
+        statusReason,
+        sampleTime: timestamp,
+      });
+    };
 
     if (phase !== "running") {
       lastTrackedPositionRef.current = point;
+      lastAcceptedTimestampRef.current = timestamp;
+      lastRawPositionRef.current = point;
+      lastRawTimestampRef.current = timestamp;
+      pendingDistanceRef.current = 0;
+      pendingStartedAtRef.current = null;
+      pendingLastPointRef.current = null;
+      updateTrackingDebug({
+        status: "standby",
+        statusReason: "Standby sample received. Run not started.",
+      });
       return;
     }
 
-    if (typeof accuracy === "number" && accuracy > 80) return;
+    if (typeof accuracy === "number" && accuracy > MAX_REASONABLE_ACCURACY_METERS) {
+      pendingDistanceRef.current = 0;
+      pendingStartedAtRef.current = null;
+      pendingLastPointRef.current = null;
+      updateTrackingDebug({
+        status: "rejected",
+        statusReason: `Dropped: accuracy ${Math.round(accuracy)}m > ${MAX_REASONABLE_ACCURACY_METERS}m limit.`,
+      });
+      return;
+    }
 
-    const previousPoint = lastTrackedPositionRef.current;
-    lastTrackedPositionRef.current = point;
+    const previousAcceptedPoint = lastTrackedPositionRef.current;
+    const previousAcceptedTimestamp = lastAcceptedTimestampRef.current;
+    const previousRawPoint = lastRawPositionRef.current;
+    const previousRawTimestamp = lastRawTimestampRef.current;
 
-    if (!previousPoint) {
+    if (!previousAcceptedPoint) {
+      lastTrackedPositionRef.current = point;
+      lastAcceptedTimestampRef.current = timestamp;
+      lastRawPositionRef.current = point;
+      lastRawTimestampRef.current = timestamp;
       setUserTrack([point]);
+      updateTrackingDebug({
+        status: "accepted",
+        statusReason: "Accepted baseline point. Waiting for next movement sample.",
+        addedDistance: 0,
+        bufferDistance: 0,
+      });
       return;
     }
 
-    const segmentDistance = calculateSegmentDistanceMeters(previousPoint, point);
-    if (segmentDistance < 1 || segmentDistance > 120) return;
+    if (!previousRawPoint) {
+      lastRawPositionRef.current = point;
+      lastRawTimestampRef.current = timestamp;
+      updateTrackingDebug({
+        status: "buffering",
+        statusReason: "Collecting raw GPS samples.",
+        bufferDistance: pendingDistanceRef.current,
+      });
+      return;
+    }
 
-    setDistance((value) => value + segmentDistance);
-    setUserTrack((track) => (track.length === 0 ? [previousPoint, point] : [...track, point]));
+    const rawSegmentDistance = calculateSegmentDistanceMeters(previousRawPoint, point);
+    const deltaSeconds = previousRawTimestamp ? Math.max((timestamp - previousRawTimestamp) / 1000, 0.001) : 1;
+    const speedMps = rawSegmentDistance / deltaSeconds;
+    const minTrackedSegmentMeters = MIN_TRACKED_SEGMENT_METERS;
+    const bufferAgeMs = pendingStartedAtRef.current ? timestamp - pendingStartedAtRef.current : 0;
+
+    lastRawPositionRef.current = point;
+    lastRawTimestampRef.current = timestamp;
+
+    if (rawSegmentDistance < MIN_RAW_SEGMENT_METERS) {
+      updateTrackingDebug({
+        status: "buffering",
+        statusReason: `Buffering: raw movement below noise floor (${MIN_RAW_SEGMENT_METERS.toFixed(2)}m).`,
+        segmentDistance: rawSegmentDistance,
+        speedMps,
+        minTrackedSegmentMeters,
+        bufferDistance: pendingDistanceRef.current,
+      });
+      return;
+    }
+
+    if (rawSegmentDistance > MAX_TRACKED_SEGMENT_METERS || speedMps > MAX_REASONABLE_RUNNING_SPEED_MPS) {
+      pendingDistanceRef.current = 0;
+      pendingStartedAtRef.current = null;
+      pendingLastPointRef.current = null;
+      lastTrackedPositionRef.current = point;
+      lastAcceptedTimestampRef.current = timestamp;
+      setUserTrack((track) => (track.length === 0 ? [point] : track));
+      updateTrackingDebug({
+        status: "rejected",
+        segmentDistance: rawSegmentDistance,
+        speedMps,
+        minTrackedSegmentMeters,
+        bufferDistance: 0,
+        statusReason:
+          rawSegmentDistance > MAX_TRACKED_SEGMENT_METERS
+            ? `Dropped: segment ${rawSegmentDistance.toFixed(1)}m > ${MAX_TRACKED_SEGMENT_METERS}m limit.`
+            : `Dropped: speed ${speedMps.toFixed(2)} m/s > ${MAX_REASONABLE_RUNNING_SPEED_MPS} m/s limit.`,
+      });
+      return;
+    }
+
+    pendingDistanceRef.current += rawSegmentDistance;
+    if (!pendingStartedAtRef.current) {
+      pendingStartedAtRef.current = timestamp;
+    }
+    pendingLastPointRef.current = point;
+
+    if (pendingDistanceRef.current < minTrackedSegmentMeters && bufferAgeMs < MAX_PENDING_BUFFER_AGE_MS) {
+      updateTrackingDebug({
+        status: "buffering",
+        segmentDistance: rawSegmentDistance,
+        speedMps,
+        minTrackedSegmentMeters,
+        bufferDistance: pendingDistanceRef.current,
+        statusReason: `Buffering: ${(minTrackedSegmentMeters - pendingDistanceRef.current).toFixed(2)}m more needed before counting.`,
+      });
+      return;
+    }
+
+    const committedDistance = pendingDistanceRef.current;
+    const acceptedPoint = pendingLastPointRef.current ?? point;
+
+    lastTrackedPositionRef.current = acceptedPoint;
+    lastAcceptedTimestampRef.current = timestamp;
+    pendingDistanceRef.current = 0;
+    pendingStartedAtRef.current = null;
+    pendingLastPointRef.current = null;
+
+    setDistance((value) => value + committedDistance);
+    setUserTrack((track) => (track.length === 0 ? [previousAcceptedPoint, acceptedPoint] : [...track, acceptedPoint]));
+    updateTrackingDebug({
+      status: "accepted",
+      segmentDistance: rawSegmentDistance,
+      speedMps,
+      minTrackedSegmentMeters,
+      bufferDistance: 0,
+      addedDistance: committedDistance,
+      statusReason: "Accepted: buffered movement counted toward distance.",
+    });
   }, [phase]);
 
   const handleStart = async () => {
@@ -420,7 +663,26 @@ export function GhostRunTracking() {
     setStandardResult(null);
     setDistanceSeries([{ t: 0, d: 0 }]);
     setUserTrack(currentPosition ? [currentPosition] : []);
+    setTrackingDebug({
+      accuracy: null,
+      segmentDistance: null,
+      speedMps: null,
+      minTrackedSegmentMeters: null,
+      bufferDistance: null,
+      addedDistance: null,
+      gpsQuality: "fair",
+      source: null,
+      status: "standby",
+      statusReason: "Run started. Waiting for movement sample.",
+      sampleTime: null,
+    });
     lastTrackedPositionRef.current = currentPosition;
+    lastAcceptedTimestampRef.current = Date.now();
+    lastRawPositionRef.current = currentPosition;
+    lastRawTimestampRef.current = Date.now();
+    pendingDistanceRef.current = 0;
+    pendingStartedAtRef.current = null;
+    pendingLastPointRef.current = null;
     setPhase("running");
     startTimers();
     const startEvent = currentPosition
@@ -439,6 +701,12 @@ export function GhostRunTracking() {
 
   const handleResume = async () => {
     lastTrackedPositionRef.current = currentPosition;
+    lastAcceptedTimestampRef.current = Date.now();
+    lastRawPositionRef.current = currentPosition;
+    lastRawTimestampRef.current = Date.now();
+    pendingDistanceRef.current = 0;
+    pendingStartedAtRef.current = null;
+    pendingLastPointRef.current = null;
     setPhase("running");
     startTimers();
     const resumeLine = await generateLifecycleLine(coachVoiceAlias, "resume");
@@ -452,7 +720,7 @@ export function GhostRunTracking() {
     const profile = getProfile();
     if (isGhostMode) {
       const outcome: "win" | "lose" | "tie" = gap > 3 ? "win" : gap < -3 ? "lose" : "tie";
-      const runResult = { mode: "ghost" as const, distance, duration: elapsed, avgPace: pace, finalGap: gap, result: outcome, wasBehinDuringRun };
+      const runResult = { mode: "ghost" as const, distance, duration: elapsed, avgPace, finalGap: gap, result: outcome, wasBehinDuringRun };
       const pointsEarned = calculateRunPoints(runResult);
       const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });
       updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
@@ -469,7 +737,7 @@ export function GhostRunTracking() {
       return { mode: "ghost" as const, pointsEarned, outcome, finalGap: gap };
     }
 
-    const runResult = { mode: "standard" as const, distance, duration: elapsed, avgPace: pace, finalGap: 0, result: undefined, wasBehinDuringRun: false };
+    const runResult = { mode: "standard" as const, distance, duration: elapsed, avgPace, finalGap: 0, result: undefined, wasBehinDuringRun: false };
     const pointsEarned = calculateRunPoints(runResult);
     const newBadges = evaluateBadges(profile, { ...runResult, pointsEarned });
     updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
@@ -477,7 +745,7 @@ export function GhostRunTracking() {
     playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
     speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias: coachVoiceAlias });
     return { mode: "standard" as const, pointsEarned };
-  }, [coachVoiceAlias, distance, elapsed, gap, isGhostMode, pace, stopTimers, wasBehinDuringRun]);
+  }, [avgPace, coachVoiceAlias, distance, elapsed, gap, isGhostMode, stopTimers, wasBehinDuringRun]);
 
   const persistRunRecord = useCallback((ghostResult?: { outcome: "win" | "lose" | "tie"; finalGap: number; pointsEarned: number } | null, standardPointsEarned?: number | null) => {
     saveRunRecord({
@@ -487,14 +755,14 @@ export function GhostRunTracking() {
       title: isGhostMode ? `Ghost Run vs ${ghostRecord?.runnerName || ghostRecord?.title || "Ghost"}` : "My Run",
       distance: Math.round(distance),
       duration: elapsed,
-      avgPace: pace,
+      avgPace,
       distanceSeries,
       date: new Date().toISOString(),
       coachAlias,
       ...(isGhostMode && ghostResult ? { ghostRecordId: ghostRecord?.id, result: ghostResult.outcome, finalGap: ghostResult.finalGap, pointsEarned: ghostResult.pointsEarned } : {}),
       ...(!isGhostMode && typeof standardPointsEarned === "number" ? { pointsEarned: standardPointsEarned } : {}),
     });
-  }, [coachAlias, distance, distanceSeries, elapsed, ghostRecord?.id, ghostRecord?.runnerName, ghostRecord?.title, isGhostMode, pace]);
+  }, [avgPace, coachAlias, distance, distanceSeries, elapsed, ghostRecord?.id, ghostRecord?.runnerName, ghostRecord?.title, isGhostMode]);
 
   const handleStop = useCallback(() => {
     finalizeRun();
@@ -529,6 +797,19 @@ export function GhostRunTracking() {
   const deltaLabel = isGhostMode ? (gap === 0 ? "EVEN" : gap > 0 ? `+${Math.round(gap)}m` : `${Math.round(gap)}m`) : phase === "idle" ? "READY" : "LIVE";
   const deltaColor = isGhostMode ? (gap > 0 ? "#10B981" : gap < 0 ? "#F97316" : "#9CA3AF") : "#2563EB";
   const canStart = !locationStatus || phase !== "idle";
+  const gpsQualityColor = {
+    excellent: "#16A34A",
+    good: "#22C55E",
+    fair: "#2563EB",
+    weak: "#F59E0B",
+    poor: "#DC2626",
+  }[trackingDebug.gpsQuality];
+  const trackingStatusBadge = {
+    standby: { label: "STANDBY", background: "#E2E8F0", color: "#475569" },
+    buffering: { label: "BUFFERING", background: "#DBEAFE", color: "#1D4ED8" },
+    accepted: { label: "ACCEPTED", background: "#DCFCE7", color: "#166534" },
+    rejected: { label: "REJECTED", background: "#FEF3C7", color: "#92400E" },
+  }[trackingDebug.status];
 
   return (
     <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background: "#F7F8FA" }}>
@@ -594,6 +875,51 @@ export function GhostRunTracking() {
             <div style={{ fontSize: "17px", fontWeight: 900, color: "#111827", fontFamily: "'Archivo Black', sans-serif", letterSpacing: "-0.02em", lineHeight: 1 }}>{value}</div>
           </div>
         ))}
+      </div>
+
+      <div className="flex-shrink-0 mx-4 mb-2 px-3 py-3 rounded-xl" style={{ background: "#F8FAFC", border: "1px solid #CBD5E1" }}>
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div style={{ fontSize: "10px", color: "#475569", fontWeight: 800, letterSpacing: "0.14em" }}>TRACKING DEBUG</div>
+          <div
+            className="px-2 py-0.5 rounded-full"
+            style={{
+              background: trackingStatusBadge.background,
+              color: trackingStatusBadge.color,
+              fontSize: "9px",
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+            }}
+          >
+            {trackingStatusBadge.label}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="px-2 py-0.5 rounded-full" style={{ background: `${gpsQualityColor}18`, color: gpsQualityColor, fontSize: "9px", fontWeight: 800, letterSpacing: "0.08em" }}>
+            GPS {fmtGpsQuality(trackingDebug.gpsQuality)}
+          </div>
+          <div className="px-2 py-0.5 rounded-full" style={{ background: "#E2E8F0", color: "#475569", fontSize: "9px", fontWeight: 800, letterSpacing: "0.08em" }}>
+            SOURCE {fmtDebugSource(trackingDebug.source)}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {[
+            { label: "Accuracy", value: fmtDebugAccuracy(trackingDebug.accuracy) },
+            { label: "Segment", value: fmtDebugMeters(trackingDebug.segmentDistance) },
+            { label: "Min Segment", value: fmtDebugMeters(trackingDebug.minTrackedSegmentMeters) },
+            { label: "Buffered", value: fmtDebugMeters(trackingDebug.bufferDistance) },
+            { label: "Added", value: fmtDebugMeters(trackingDebug.addedDistance) },
+            { label: "Speed", value: fmtDebugSpeed(trackingDebug.speedMps) },
+            { label: "Sample Time", value: fmtDebugTime(trackingDebug.sampleTime) },
+            { label: "Run Phase", value: phase.toUpperCase() },
+          ].map(({ label, value }) => (
+            <div key={label} className="min-w-0">
+              <div style={{ fontSize: "9px", color: "#94A3B8", fontWeight: 700, letterSpacing: "0.08em", marginBottom: "2px" }}>{label}</div>
+              <div style={{ fontSize: "11px", color: "#0F172A", fontWeight: 700, lineHeight: 1.35, wordBreak: "break-word" }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: "9px", color: "#94A3B8", fontWeight: 700, letterSpacing: "0.08em", marginTop: "10px", marginBottom: "4px" }}>TRACKING STATUS</div>
+        <div style={{ fontSize: "11px", color: "#334155", lineHeight: 1.45 }}>{trackingDebug.statusReason}</div>
       </div>
 
       {locationStatus && phase !== "done" && (

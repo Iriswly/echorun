@@ -8,6 +8,7 @@ type PositionPayload = {
   lat: number;
   accuracy?: number;
   timestamp: number;
+  source: "amap" | "browser";
 };
 
 type LiveRunMapProps = {
@@ -159,6 +160,36 @@ function getPointOnTrack(track: LngLatTuple[], progress: number): LngLatTuple | 
   ];
 }
 
+function isValidLngLat(point: unknown): point is LngLatTuple {
+  return (
+    Array.isArray(point) &&
+    point.length === 2 &&
+    typeof point[0] === "number" &&
+    Number.isFinite(point[0]) &&
+    typeof point[1] === "number" &&
+    Number.isFinite(point[1])
+  );
+}
+
+function readAmapPosition(result: any): { lng: number; lat: number; accuracy?: number } | null {
+  const position = result?.position ?? result?.lnglat ?? result?.location ?? result;
+  if (!position) return null;
+
+  const lng = typeof position.getLng === "function" ? position.getLng() : position.lng ?? position.longitude;
+  const lat = typeof position.getLat === "function" ? position.getLat() : position.lat ?? position.latitude;
+
+  if (typeof lng !== "number" || !Number.isFinite(lng) || typeof lat !== "number" || !Number.isFinite(lat)) {
+    return null;
+  }
+
+  const accuracy = Number(result?.accuracy ?? position.accuracy);
+  return {
+    lng,
+    lat,
+    accuracy: Number.isFinite(accuracy) ? accuracy : undefined,
+  };
+}
+
 export function LiveRunMap({
   phase,
   isGhostMode,
@@ -181,12 +212,86 @@ export function LiveRunMap({
   const trackLineRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const pollTimerRef = useRef<number | null>(null);
+  const amapWatchIdRef = useRef<number | null>(null);
+  const browserWatchIdRef = useRef<number | null>(null);
   const hasCenteredRef = useRef(false);
   const statusRef = useRef<string | null>(null);
+  const onPositionChangeRef = useRef(onPositionChange);
+  const onLocationStatusChangeRef = useRef(onLocationStatusChange);
   const [sdkError, setSdkError] = useState<string | null>(null);
   const [debugStatus, setDebugStatus] = useState("Preparing AMap...");
+  const [mapReady, setMapReady] = useState(false);
 
   const canUseAmap = useMemo(() => Boolean(AMAP_API_KEY), []);
+
+  useEffect(() => {
+    onPositionChangeRef.current = onPositionChange;
+  }, [onPositionChange]);
+
+  useEffect(() => {
+    onLocationStatusChangeRef.current = onLocationStatusChange;
+  }, [onLocationStatusChange]);
+
+  const updateMapPosition = (lng: number, lat: number, accuracy?: number, shouldPan = true) => {
+    userMarkerRef.current?.setPosition([lng, lat]);
+    accuracyCircleRef.current?.setCenter([lng, lat]);
+    accuracyCircleRef.current?.setRadius(typeof accuracy === "number" ? accuracy : 0);
+
+    if (!mapRef.current) return;
+
+    if (!hasCenteredRef.current) {
+      mapRef.current.setCenter([lng, lat]);
+      hasCenteredRef.current = true;
+      return;
+    }
+
+    if (shouldPan) {
+      mapRef.current.panTo([lng, lat]);
+    }
+  };
+
+  const emitResolvedPosition = (
+    lng: number,
+    lat: number,
+    accuracy?: number,
+    debugMessage = "Live position updated.",
+    shouldPan = true,
+    timestamp = Date.now(),
+    source: "amap" | "browser" = "amap",
+  ) => {
+    updateMapPosition(lng, lat, accuracy, shouldPan);
+    if (statusRef.current) {
+      statusRef.current = null;
+      onLocationStatusChangeRef.current?.(null);
+    }
+    setSdkError(null);
+    setDebugStatus(debugMessage);
+    onPositionChangeRef.current({ lng, lat, accuracy, timestamp, source });
+  };
+
+  const convertGpsToAmap = (lng: number, lat: number): Promise<LngLatTuple> => {
+    const AMap = window.AMap;
+    if (!AMap?.convertFrom) {
+      return Promise.resolve([lng, lat]);
+    }
+
+    return new Promise((resolve) => {
+      AMap.convertFrom([lng, lat], "gps", (status: string, result: any) => {
+        const location = result?.locations?.[0];
+        if (status === "complete" && location) {
+          if (typeof location.getLng === "function" && typeof location.getLat === "function") {
+            resolve([location.getLng(), location.getLat()]);
+            return;
+          }
+          if (typeof location.lng === "number" && typeof location.lat === "number") {
+            resolve([location.lng, location.lat]);
+            return;
+          }
+        }
+        resolve([lng, lat]);
+      });
+    });
+  };
 
   useEffect(() => {
     if (!canUseAmap || !containerRef.current) return;
@@ -213,7 +318,6 @@ export function LiveRunMap({
         map.add(tileLayerRef.current);
 
         trackLineRef.current = new AMap.Polyline({
-          path: [],
           strokeColor: "#2563EB",
           strokeWeight: 6,
           strokeOpacity: 0.9,
@@ -248,6 +352,7 @@ export function LiveRunMap({
         });
 
         map.add([trackLineRef.current, accuracyCircleRef.current, userMarkerRef.current]);
+        trackLineRef.current.hide();
         map.add(ghostMarkerRef.current);
         ghostMarkerRef.current.hide();
         map.on("complete", () => setDebugStatus("Map render complete."));
@@ -266,53 +371,35 @@ export function LiveRunMap({
             showButton: false,
             showMarker: false,
             showCircle: false,
+            GeoLocationFirst: true,
             panToLocation: false,
             zoomToAccuracy: false,
             needAddress: false,
           });
-
-          onLocationStatusChange?.("Locating...");
-          statusRef.current = "Locating...";
-          setDebugStatus("Requesting current position...");
-          geolocationRef.current.getCurrentPosition((status: string, result: any) => {
-            if (disposed) return;
-
-            if (status === "complete" && result?.position) {
-              const lng = result.position.lng;
-              const lat = result.position.lat;
-              const accuracy = result.accuracy;
-
-              userMarkerRef.current?.setPosition([lng, lat]);
-              accuracyCircleRef.current?.setCenter([lng, lat]);
-              accuracyCircleRef.current?.setRadius(typeof accuracy === "number" ? accuracy : 0);
-              map.setCenter([lng, lat]);
-              hasCenteredRef.current = true;
-              statusRef.current = null;
-              onLocationStatusChange?.(null);
-              setDebugStatus("Location acquired.");
-              onPositionChange({ lng, lat, accuracy, timestamp: Date.now() });
-            } else {
-              const message = result?.message || result?.info || "Location failed.";
-              setSdkError(message);
-              statusRef.current = message;
-              onLocationStatusChange?.(message);
-              setDebugStatus(`Location failed: ${message}`);
-            }
-          });
+          setMapReady(true);
         });
       })
       .catch((error: Error) => {
         if (disposed) return;
         setSdkError(error.message);
-        onLocationStatusChange?.(error.message);
+        onLocationStatusChangeRef.current?.(error.message);
         setDebugStatus(`AMap init failed: ${error.message}`);
       });
 
     return () => {
       disposed = true;
+      setMapReady(false);
       if (pollTimerRef.current) {
         window.clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
+      }
+      if (amapWatchIdRef.current !== null) {
+        geolocationRef.current?.clearWatch?.(amapWatchIdRef.current);
+        amapWatchIdRef.current = null;
+      }
+      if (browserWatchIdRef.current !== null && typeof navigator !== "undefined" && navigator.geolocation) {
+        navigator.geolocation.clearWatch(browserWatchIdRef.current);
+        browserWatchIdRef.current = null;
       }
       ghostMarkerRef.current?.setMap?.(null);
       userMarkerRef.current?.setMap?.(null);
@@ -328,7 +415,7 @@ export function LiveRunMap({
       geolocationRef.current = null;
       mapRef.current = null;
     };
-  }, [canUseAmap, ghostName, onLocationStatusChange, onPositionChange]);
+  }, [canUseAmap]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -341,60 +428,160 @@ export function LiveRunMap({
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !geolocationRef.current) return;
+    if (!mapReady) return;
 
-    const tick = () => {
-      setDebugStatus(phase === "running" ? "Refreshing live position..." : "Refreshing standby position...");
+    statusRef.current = "Locating...";
+    onLocationStatusChangeRef.current?.("Locating...");
+    setDebugStatus(phase === "running" ? "Starting AMap live tracking..." : "Requesting AMap location...");
+
+    let disposed = false;
+    let browserWatchActive = false;
+
+    const emitAmapResult = (result: any, message: string) => {
+      if (disposed) return false;
+      const position = readAmapPosition(result);
+      if (!position) return false;
+
+      emitResolvedPosition(position.lng, position.lat, position.accuracy, message, true, Date.now(), "amap");
+      return true;
+    };
+
+    const getAmapCurrentPosition = (message = "Live position updated via AMap.") => {
+      if (!geolocationRef.current) return;
+
       geolocationRef.current.getCurrentPosition((status: string, result: any) => {
-        if (status === "complete" && result?.position) {
-          const lng = result.position.lng;
-          const lat = result.position.lat;
-          const accuracy = result.accuracy;
-
-          userMarkerRef.current?.setPosition([lng, lat]);
-          accuracyCircleRef.current?.setCenter([lng, lat]);
-          accuracyCircleRef.current?.setRadius(typeof accuracy === "number" ? accuracy : 0);
-          if (!hasCenteredRef.current) {
-            mapRef.current.setCenter([lng, lat]);
-            hasCenteredRef.current = true;
-          } else {
-            mapRef.current.panTo([lng, lat]);
-          }
-
-          if (statusRef.current) {
-            statusRef.current = null;
-            onLocationStatusChange?.(null);
-          }
-          setSdkError(null);
-          setDebugStatus("Live position updated.");
-          onPositionChange({ lng, lat, accuracy, timestamp: Date.now() });
-        } else {
-          const message = result?.message || result?.info || "Location failed.";
-          statusRef.current = message;
-          onLocationStatusChange?.(message);
-          setSdkError(message);
-          setDebugStatus(`Refresh failed: ${message}`);
+        if (disposed) return;
+        if (status === "complete" && emitAmapResult(result, message)) {
+          return;
         }
+
+        const errorMessage = result?.message || result?.info || "Location failed.";
+        statusRef.current = errorMessage;
+        setSdkError(errorMessage);
+        setDebugStatus(`Location failed: ${errorMessage}`);
+        onLocationStatusChangeRef.current?.(errorMessage);
       });
     };
 
-    tick();
-    if (pollTimerRef.current) {
-      window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    pollTimerRef.current = window.setInterval(tick, phase === "running" ? 1000 : 2000);
-    return () => {
+    const startBrowserFallbackWatch = () => {
+      if (browserWatchActive || typeof navigator === "undefined" || !navigator.geolocation) return;
+
+      browserWatchActive = true;
+      setDebugStatus("AMap tracking failed. Browser GPS fallback active.");
+      browserWatchIdRef.current = navigator.geolocation.watchPosition(
+        async (position) => {
+          const converted = await convertGpsToAmap(position.coords.longitude, position.coords.latitude);
+          if (disposed || !browserWatchActive) return;
+          emitResolvedPosition(converted[0], converted[1], position.coords.accuracy, "Browser GPS fallback active.", true, position.timestamp, "browser");
+        },
+        (error) => {
+          if (disposed) return;
+          const message =
+            error.code === error.PERMISSION_DENIED
+              ? "Location permission denied."
+              : error.code === error.TIMEOUT
+                ? "GPS watch timed out."
+                : error.code === error.POSITION_UNAVAILABLE
+                  ? "GPS position unavailable."
+                  : error.message || "GPS watch failed.";
+
+          statusRef.current = message;
+          setSdkError(message);
+          setDebugStatus(`GPS watch failed: ${message}`);
+          onLocationStatusChangeRef.current?.(message);
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 15000,
+        },
+      );
+    };
+
+    if (phase !== "running") {
+      getAmapCurrentPosition("AMap standby location updated.");
       if (pollTimerRef.current) {
         window.clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
       }
+      pollTimerRef.current = window.setInterval(() => getAmapCurrentPosition("AMap standby location updated."), 4000);
+      return () => {
+        disposed = true;
+        if (amapWatchIdRef.current !== null) {
+          geolocationRef.current?.clearWatch?.(amapWatchIdRef.current);
+          amapWatchIdRef.current = null;
+        }
+        if (pollTimerRef.current) {
+          window.clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+        browserWatchActive = false;
+        if (browserWatchIdRef.current !== null && typeof navigator !== "undefined" && navigator.geolocation) {
+          navigator.geolocation.clearWatch(browserWatchIdRef.current);
+          browserWatchIdRef.current = null;
+        }
+      };
+    }
+
+    getAmapCurrentPosition("AMap live tracking active.");
+
+    if (typeof geolocationRef.current?.watchPosition === "function") {
+      amapWatchIdRef.current = geolocationRef.current.watchPosition((status: string, result: any) => {
+        if (disposed) return;
+        if (status === "complete" && emitAmapResult(result, "AMap live tracking active.")) {
+          return;
+        }
+
+        const message = result?.message || result?.info || "AMap live tracking failed.";
+        statusRef.current = message;
+        setSdkError(message);
+        setDebugStatus(`AMap tracking failed: ${message}`);
+        onLocationStatusChangeRef.current?.(message);
+        startBrowserFallbackWatch();
+      });
+    } else {
+      if (pollTimerRef.current) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      pollTimerRef.current = window.setInterval(() => getAmapCurrentPosition("AMap live polling active."), 1000);
+      setDebugStatus("AMap live polling active.");
+    }
+
+    return () => {
+      disposed = true;
+      if (amapWatchIdRef.current !== null) {
+        geolocationRef.current?.clearWatch?.(amapWatchIdRef.current);
+        amapWatchIdRef.current = null;
+      }
+      if (pollTimerRef.current) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      browserWatchActive = false;
+      if (browserWatchIdRef.current !== null && typeof navigator !== "undefined" && navigator.geolocation) {
+        navigator.geolocation.clearWatch(browserWatchIdRef.current);
+        browserWatchIdRef.current = null;
+      }
     };
-  }, [phase, onLocationStatusChange, onPositionChange]);
+  }, [mapReady, phase]);
 
   useEffect(() => {
     if (!trackLineRef.current) return;
-    trackLineRef.current.setPath(userTrack);
+    const validPath = userTrack.filter(isValidLngLat);
+
+    if (validPath.length < 2) {
+      trackLineRef.current.hide();
+      return;
+    }
+
+    const amapPath = validPath.map(([lng, lat]) => {
+      const AMap = window.AMap;
+      return AMap ? new AMap.LngLat(lng, lat) : [lng, lat];
+    });
+
+    trackLineRef.current.setPath(amapPath);
+    trackLineRef.current.show();
   }, [userTrack]);
 
   useEffect(() => {

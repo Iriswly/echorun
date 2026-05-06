@@ -1,44 +1,33 @@
 import { getStorageKey } from "./auth.js";
 
 const AUDIO_ENABLED_KEY = "ECHORUN_AUDIO_ENABLED";
-const XFYUN_TTS_URL = "wss://tts-api.xfyun.cn/v2/tts";
 const DASHSCOPE_DEFAULT_BASE_URL = import.meta.env.VITE_DASHSCOPE_API_BASE_URL?.trim() || "https://dashscope.aliyuncs.com/api/v1";
-const QWEN_VOICE_DESIGN_MODEL = "qwen-voice-design";
-const QWEN_TTS_VD_MODEL = "qwen3-tts-vd-2026-01-26";
+const COSYVOICE_FLASH_MODEL = "cosyvoice-v3-flash";
+const COSYVOICE_ENROLLMENT_MODEL = "voice-enrollment";
 
 export const COACH_VOICE_SETTINGS = {
-  DREDD: { vcn: "x4_enuk_george_assist", rate: 50, pitch: 45, volume: 70 },
-  KIRA: { vcn: "x4_EnUs_Laura_education", rate: 40, pitch: 55, volume: 65 },
-  TITAN: { vcn: "x4_enus_gavin_assist", rate: 55, pitch: 48, volume: 75 },
-  SPECTER: { vcn: "x4_EnUs_Lindsay_assist", rate: 40, pitch: 50, volume: 65 },
+  DREDD: { voice: "longlaotie_v3", rate: 1.06, pitch: 0.92, volume: 62 },
+  KIRA: { voice: "longyingling_v3", rate: 0.9, pitch: 1.06, volume: 54 },
+  TITAN: { voice: "longanlang_v3", rate: 1.14, pitch: 1.0, volume: 70 },
+  SPECTER: { voice: "longxiaoxia_v3", rate: 0.96, pitch: 0.96, volume: 56 },
 };
 
 const CUSTOM_VOICE_STYLE_MAP = {
-  gentle: COACH_VOICE_SETTINGS.KIRA.vcn,
-  harsh: COACH_VOICE_SETTINGS.DREDD.vcn,
-  hype: COACH_VOICE_SETTINGS.TITAN.vcn,
-  analytic: COACH_VOICE_SETTINGS.SPECTER.vcn,
+  gentle: COACH_VOICE_SETTINGS.KIRA,
+  harsh: COACH_VOICE_SETTINGS.DREDD,
+  hype: COACH_VOICE_SETTINGS.TITAN,
+  analytic: COACH_VOICE_SETTINGS.SPECTER,
 };
 
 let lastError = null;
 let speaking = false;
 let audioContext = null;
 let currentAudio = null;
-let activeSocket = null;
 const listeners = new Set();
-const intentionallyClosedSockets = new Set();
 const intentionallyStoppedAudio = new Set();
 
 function hasWindow() {
   return typeof window !== "undefined";
-}
-
-function getXfyunConfig() {
-  return {
-    appId: import.meta.env.VITE_XFYUN_APP_ID?.trim(),
-    apiKey: import.meta.env.VITE_XFYUN_API_KEY?.trim(),
-    apiSecret: import.meta.env.VITE_XFYUN_API_SECRET?.trim(),
-  };
 }
 
 function getDashScopeConfig() {
@@ -48,17 +37,12 @@ function getDashScopeConfig() {
   };
 }
 
-function isXfyunConfigured() {
-  const { appId, apiKey, apiSecret } = getXfyunConfig();
-  return !!(appId && apiKey && apiSecret);
-}
-
 function isDashScopeConfigured() {
   return !!getDashScopeConfig().apiKey;
 }
 
 export function isSpeechSupported() {
-  return hasWindow() && typeof window.WebSocket !== "undefined" && typeof window.Audio !== "undefined";
+  return hasWindow() && typeof window.Audio !== "undefined" && typeof window.fetch !== "undefined";
 }
 
 export function isAudioEnabled() {
@@ -75,14 +59,6 @@ function base64ToUint8Array(base64) {
   return bytes;
 }
 
-function inferLanguageType(text) {
-  const value = String(text || "");
-  if (/[\u4e00-\u9fff]/.test(value)) return "Chinese";
-  if (/[ぁ-んァ-ン]/.test(value)) return "Japanese";
-  if (/[가-힣]/.test(value)) return "Korean";
-  return "English";
-}
-
 function inferPreviewText(voicePrompt) {
   return /[\u4e00-\u9fff]/.test(String(voicePrompt || ""))
     ? "这是你的专属教练声音。"
@@ -94,6 +70,64 @@ function inferMimeType(format) {
   if (value.includes("wav")) return "audio/wav";
   if (value.includes("ogg")) return "audio/ogg";
   return "audio/mpeg";
+}
+
+function readStoredCoachConfig() {
+  if (!hasWindow()) return {};
+  try {
+    return JSON.parse(localStorage.getItem(getStorageKey("ECHORUN_COACH")) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function notifyAudioStatus() {
+  const status = getAudioStatus();
+  listeners.forEach((listener) => listener(status));
+}
+
+export function subscribeAudioStatus(listener) {
+  listeners.add(listener);
+  listener(getAudioStatus());
+  return () => listeners.delete(listener);
+}
+
+export function setAudioEnabled(enabled) {
+  if (!hasWindow()) return;
+  localStorage.setItem(getStorageKey(AUDIO_ENABLED_KEY), enabled ? "true" : "false");
+  if (!enabled) stopSpeech();
+  notifyAudioStatus();
+}
+
+export function getAudioStatus() {
+  return {
+    enabled: isAudioEnabled(),
+    supported: isSpeechSupported(),
+    speaking,
+    lastError,
+  };
+}
+
+export function clearAudioError() {
+  lastError = null;
+  notifyAudioStatus();
+}
+
+function stopCurrentAudioElement() {
+  if (!currentAudio) return;
+  intentionallyStoppedAudio.add(currentAudio);
+  currentAudio.pause();
+  currentAudio.removeAttribute("src");
+  currentAudio.load();
+  currentAudio.src = "";
+  currentAudio = null;
+}
+
+export function stopSpeech() {
+  lastError = null;
+  speaking = false;
+  stopCurrentAudioElement();
+  notifyAudioStatus();
 }
 
 async function requestDashScopeJson(path, payload) {
@@ -113,7 +147,12 @@ async function requestDashScopeJson(path, payload) {
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.message || data?.error?.message || `DASHSCOPE_${response.status}`);
+    const detail =
+      data?.message ||
+      data?.error?.message ||
+      data?.code ||
+      (data ? JSON.stringify(data) : "");
+    throw new Error(detail || `DASHSCOPE_${response.status}`);
   }
 
   return data;
@@ -191,250 +230,121 @@ async function playAudioBytes(audioBytes, mimeType = "audio/mpeg", options = {})
   });
 }
 
-function readStoredCoachConfig() {
-  if (!hasWindow()) return {};
-  try {
-    return JSON.parse(localStorage.getItem(getStorageKey("ECHORUN_COACH")) || "{}");
-  } catch {
-    return {};
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function normalizeInstruction(text) {
+  const value = String(text || "").trim();
+  return value || undefined;
+}
+
+function normalizeVoicePrefix(value) {
+  const normalized = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .slice(0, 10);
+
+  return normalized || "echorun";
+}
+
+function inferLanguageHints(text) {
+  const value = String(text || "");
+  const hasChinese = /[\u4e00-\u9fff]/.test(value);
+  const hasLatin = /[A-Za-z]/.test(value);
+  if (hasChinese && hasLatin) {
+    const latinCount = (value.match(/[A-Za-z]/g) || []).length;
+    const chineseCount = (value.match(/[\u4e00-\u9fff]/g) || []).length;
+    return [latinCount >= chineseCount ? "en" : "zh"];
   }
+  if (hasChinese) return ["zh"];
+  return ["en"];
 }
 
-function notifyAudioStatus() {
-  const status = getAudioStatus();
-  listeners.forEach((listener) => listener(status));
+function normalizeEnglishForTts(text) {
+  return String(text || "")
+    .replace(/\/km\b/gi, " per kilometer")
+    .replace(/\bkm\b/gi, " kilometers")
+    .replace(/\bm\b/g, " meters")
+    .replace(/(\d)\+(\d)/g, "$1 plus $2")
+    .replace(/(\d)-(\d)/g, "$1 to $2");
 }
 
-export function subscribeAudioStatus(listener) {
-  listeners.add(listener);
-  listener(getAudioStatus());
-  return () => listeners.delete(listener);
-}
-
-export function setAudioEnabled(enabled) {
-  if (!hasWindow()) return;
-  localStorage.setItem(getStorageKey(AUDIO_ENABLED_KEY), enabled ? "true" : "false");
-  if (!enabled) stopSpeech();
-  notifyAudioStatus();
-}
-
-export function getAudioStatus() {
-  return {
-    enabled: isAudioEnabled(),
-    supported: isSpeechSupported(),
-    speaking,
-    lastError,
-  };
-}
-
-export function clearAudioError() {
-  lastError = null;
-  notifyAudioStatus();
-}
-
-function stopCurrentAudioElement() {
-  if (!currentAudio) return;
-  intentionallyStoppedAudio.add(currentAudio);
-  currentAudio.pause();
-  currentAudio.removeAttribute("src");
-  currentAudio.load();
-  currentAudio.src = "";
-  currentAudio = null;
-}
-
-function stopCurrentSocket() {
-  if (!activeSocket) return;
-  try {
-    intentionallyClosedSockets.add(activeSocket);
-    activeSocket.close();
-  } catch {}
-  activeSocket = null;
-}
-
-export function stopSpeech() {
-  lastError = null;
-  speaking = false;
-  stopCurrentSocket();
-  stopCurrentAudioElement();
-  notifyAudioStatus();
-}
-
-function stringToUint8Array(input) {
-  return new TextEncoder().encode(input);
-}
-
-function toBase64(bytes) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function hmacSha256Base64(secret, content) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    stringToUint8Array(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, stringToUint8Array(content));
-  return toBase64(new Uint8Array(signature));
-}
-
-async function buildAuthorizedUrl() {
-  const { apiKey, apiSecret } = getXfyunConfig();
-  const host = "tts-api.xfyun.cn";
-  const date = new Date().toUTCString();
-  const requestLine = "GET /v2/tts HTTP/1.1";
-  const signatureOrigin = `host: ${host}\ndate: ${date}\n${requestLine}`;
-  const signature = await hmacSha256Base64(apiSecret, signatureOrigin);
-  const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`;
-  const authorization = btoa(authorizationOrigin);
-  return `${XFYUN_TTS_URL}?authorization=${encodeURIComponent(authorization)}&date=${encodeURIComponent(date)}&host=${host}`;
-}
-
-function concatUint8Arrays(chunks) {
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  chunks.forEach((chunk) => {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  });
-  return merged;
-}
-
-function decodeBase64Chunk(base64) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
+function prepareSpeechText(text, voiceProfile) {
+  const raw = String(text || "").trim();
+  const instruction = String(voiceProfile.instruction || "");
+  const shouldPreferEnglish = !/[\u4e00-\u9fff]/.test(raw) && !/[\u4e00-\u9fff]/.test(instruction);
+  return shouldPreferEnglish ? normalizeEnglishForTts(raw) : raw;
 }
 
 function resolveVoiceProfile(coachAlias, options = {}) {
   const stored = readStoredCoachConfig();
-  if (options.ttsVcn) {
+
+  if (options.voice) {
     return {
-      vcn: options.ttsVcn,
-      rate: options.rate ?? 40,
-      pitch: options.pitch ?? 50,
-      volume: options.volume ?? 70,
+      voice: options.voice,
+      rate: options.rate ?? 1,
+      pitch: options.pitch ?? 1,
+      volume: options.volume ?? 50,
+      instruction: normalizeInstruction(options.instruction),
     };
   }
 
-  if (coachAlias === "CUSTOM" && stored?.ttsVcn) {
+  if (coachAlias === "CUSTOM" && stored?.customVoiceName) {
+    const baseProfile = CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle] || CUSTOM_VOICE_STYLE_MAP.gentle;
     return {
-      vcn: stored.ttsVcn,
-      rate: options.rate ?? 40,
-      pitch: options.pitch ?? 50,
-      volume: options.volume ?? 70,
+      voice: stored.customVoiceName,
+      rate: baseProfile.rate,
+      pitch: baseProfile.pitch,
+      volume: baseProfile.volume,
+      instruction: normalizeInstruction(stored.customPersonaSummary || baseProfile.instruction),
     };
   }
 
   if (coachAlias === "CUSTOM" && stored?.alias === "CUSTOM" && stored?.voiceStyle && CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle]) {
-    return {
-      vcn: CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle],
-      rate: 38,
-      pitch: 50,
-      volume: 70,
-    };
+    return CUSTOM_VOICE_STYLE_MAP[stored.voiceStyle];
   }
 
   return COACH_VOICE_SETTINGS[coachAlias] ?? COACH_VOICE_SETTINGS.DREDD;
 }
 
 async function requestSpeechAudio(text, voiceProfile) {
-  const url = await buildAuthorizedUrl();
-
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
-    activeSocket = socket;
-    const audioChunks = [];
-    let settled = false;
-    const isIntentionalClose = () => intentionallyClosedSockets.has(socket);
-
-    socket.onopen = () => {
-      socket.send(JSON.stringify({
-        common: { app_id: getXfyunConfig().appId },
-        business: {
-          aue: "lame",
-          auf: "audio/L16;rate=16000",
-          vcn: voiceProfile.vcn,
-          speed: voiceProfile.rate,
-          pitch: voiceProfile.pitch,
-          volume: voiceProfile.volume,
-          sfl: 1,
-        },
-        data: {
-          status: 2,
-          text: btoa(unescape(encodeURIComponent(text))),
-        },
-      }));
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.code !== 0) {
-          reject(new Error(payload.message || `XFYUN_TTS_${payload.code}`));
-          socket.close();
-          return;
-        }
-
-        const chunk = payload?.data?.audio;
-        if (chunk) {
-          audioChunks.push(decodeBase64Chunk(chunk));
-        }
-
-        if (payload?.data?.status === 2) {
-          settled = true;
-          socket.close();
-          resolve(concatUint8Arrays(audioChunks));
-        }
-      } catch (error) {
-        settled = true;
-        reject(error);
-        socket.close();
-      }
-    };
-
-    socket.onerror = () => {
-      if (isIntentionalClose()) return;
-      settled = true;
-      reject(new Error("Failed to connect to XFYUN TTS."));
-    };
-
-    socket.onclose = () => {
-      const intentional = isIntentionalClose();
-      intentionallyClosedSockets.delete(socket);
-      if (activeSocket === socket) {
-        activeSocket = null;
-      }
-      if (intentional) {
-        settled = true;
-        return;
-      }
-      if (!settled && audioChunks.length === 0) {
-        reject(new Error("XFYUN TTS request was interrupted."));
-      }
-    };
+  const preparedText = prepareSpeechText(text, voiceProfile);
+  const response = await requestDashScopeJson("/services/audio/tts/SpeechSynthesizer", {
+    model: COSYVOICE_FLASH_MODEL,
+    input: {
+      text: preparedText,
+      voice: voiceProfile.voice,
+      format: "mp3",
+      sample_rate: 24000,
+      rate: clamp(Number(voiceProfile.rate ?? 1), 0.5, 2),
+      pitch: clamp(Number(voiceProfile.pitch ?? 1), 0.5, 2),
+      volume: clamp(Number(voiceProfile.volume ?? 50), 0, 100),
+      instruction: normalizeInstruction(voiceProfile.instruction),
+      language_hints: inferLanguageHints(preparedText),
+    },
   });
+
+  const output = response?.output ?? {};
+  const audio = output.audio ?? {};
+  return {
+    audioUrl: audio.url || "",
+    audioData: audio.data || "",
+    responseFormat: audio.response_format || output.response_format || "mp3",
+  };
 }
 
-async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = QWEN_TTS_VD_MODEL }) {
+async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = COSYVOICE_FLASH_MODEL }) {
+  const resolvedPreviewText = previewText || inferPreviewText(voicePrompt);
   const response = await requestDashScopeJson("/services/audio/tts/customization", {
-    model: QWEN_VOICE_DESIGN_MODEL,
+    model: COSYVOICE_ENROLLMENT_MODEL,
     input: {
-      action: "create",
+      action: "create_voice",
       target_model: targetModel,
       voice_prompt: voicePrompt,
-      preview_text: previewText || inferPreviewText(voicePrompt),
-      preferred_name: preferredName || "EchoRun Custom Voice",
+      preview_text: resolvedPreviewText,
+      prefix: normalizeVoicePrefix(preferredName || "echorun"),
+      language_hints: inferLanguageHints(resolvedPreviewText),
     },
     parameters: {
       sample_rate: 24000,
@@ -445,9 +355,9 @@ async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, preview
   const output = response?.output ?? {};
   const previewAudio = output.preview_audio ?? {};
   return {
-    voiceName: output.voice || output.voice_name || "",
+    voiceName: output.voice_id || "",
     targetModel: output.target_model || targetModel,
-    previewText: previewText || inferPreviewText(voicePrompt),
+    previewText: resolvedPreviewText,
     previewAudioData: previewAudio.data || output.data || "",
     responseFormat: previewAudio.response_format || output.response_format || "wav",
     sampleRate: previewAudio.sample_rate || output.sample_rate || 24000,
@@ -455,22 +365,15 @@ async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, preview
 }
 
 async function requestDashScopeSynthesis(text, voiceName, options = {}) {
-  const response = await requestDashScopeJson("/services/aigc/multimodal-generation/generation", {
-    model: options.model || QWEN_TTS_VD_MODEL,
-    input: {
-      text,
-      voice: voiceName,
-      language_type: options.languageType || inferLanguageType(text),
-    },
+  const profile = resolveVoiceProfile("CUSTOM", { voice: voiceName, instruction: options.instruction });
+  return requestSpeechAudio(text, {
+    ...profile,
+    voice: voiceName,
+    rate: options.rate ?? profile.rate,
+    pitch: options.pitch ?? profile.pitch,
+    volume: options.volume ?? profile.volume,
+    instruction: options.instruction ?? profile.instruction,
   });
-
-  const output = response?.output ?? {};
-  const audio = output.audio ?? {};
-  return {
-    audioUrl: audio.url || "",
-    audioData: audio.data || "",
-    responseFormat: audio.response_format || output.response_format || "",
-  };
 }
 
 export async function designCustomVoice({ voicePrompt, preferredName, previewText, targetModel }) {
@@ -511,16 +414,16 @@ export async function speakMessage(text, options = {}) {
   try {
     if (interrupt) stopSpeech();
 
-    if (shouldUseCustomDashScopeVoice) {
-      if (!isDashScopeConfigured()) {
-        lastError = "DASHSCOPE_API_KEY is missing.";
-        onError?.(lastError);
-        notifyAudioStatus();
-        return false;
-      }
+    if (!isDashScopeConfigured()) {
+      lastError = "DASHSCOPE_API_KEY is missing.";
+      onError?.(lastError);
+      notifyAudioStatus();
+      return false;
+    }
 
+    if (shouldUseCustomDashScopeVoice) {
       const synthesis = await requestDashScopeSynthesis(text, stored.customVoiceName, {
-        model: stored.customTtsModel || QWEN_TTS_VD_MODEL,
+        instruction: stored.customPersonaSummary,
       });
 
       if (synthesis.audioUrl) {
@@ -538,21 +441,26 @@ export async function speakMessage(text, options = {}) {
       throw new Error("DASHSCOPE_AUDIO_EMPTY");
     }
 
-    if (!isXfyunConfigured()) {
-      lastError = "XFYUN TTS credentials are missing.";
-      onError?.(lastError);
-      notifyAudioStatus();
-      return false;
+    const voiceProfile = resolveVoiceProfile(coachAlias, options);
+    const synthesis = await requestSpeechAudio(text, voiceProfile);
+
+    if (synthesis.audioUrl) {
+      return playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
     }
 
-    const voiceProfile = resolveVoiceProfile(coachAlias, options);
-    const audioBytes = await requestSpeechAudio(text, voiceProfile);
-    return playAudioBytes(audioBytes, "audio/mpeg", { onStart, onEnd, onError });
+    if (synthesis.audioData) {
+      return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
+        onStart,
+        onEnd,
+        onError,
+      });
+    }
+
+    throw new Error("DASHSCOPE_AUDIO_EMPTY");
   } catch (error) {
     speaking = false;
-    const message = error instanceof Error ? error.message : shouldUseCustomDashScopeVoice ? "DASHSCOPE TTS failed." : "XFYUN TTS failed.";
+    const message = error instanceof Error ? error.message : "DASHSCOPE TTS failed.";
     const isExpectedInterrupt =
-      message === "XFYUN TTS request was interrupted." ||
       message === "The play() request was interrupted by a call to pause()." ||
       (error instanceof DOMException && error.name === "AbortError");
     if (isExpectedInterrupt) {
