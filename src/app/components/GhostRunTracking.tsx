@@ -343,6 +343,7 @@ export function GhostRunTracking() {
   const pendingDistanceRef = useRef(0);
   const pendingStartedAtRef = useRef<number | null>(null);
   const pendingLastPointRef = useRef<LngLatTuple | null>(null);
+  const isStartingRef = useRef(false);
 
   const ghostDistance = isGhostMode && ghostRecord ? getDistanceAtTime(ghostRecord.distanceSeries || [], elapsed, ghostRecord.duration, ghostRecord.distance) : 0;
   const gap = distance - ghostDistance;
@@ -670,53 +671,62 @@ export function GhostRunTracking() {
   }, [phase]);
 
   const handleStart = async () => {
-    unlockAudioPlayback().catch(() => {});
-    resetCoachSession();
-    resetAiCoachSession();
-    stopTimers();
-    milestoneRef.current = { m500: false, m1k: false, m2k: false, t5: false, t10: false };
-    prevGapRef.current = 0;
-    gapBucketRef.current = null;
-    leadStateRef.current = "even";
-    setElapsed(0);
-    setDistance(0);
-    setDisplayDistance(0);
-    setWasBehind(false);
-    setResult(null);
-    setStandardResult(null);
-    setDistanceSeries([{ t: 0, d: 0 }]);
-    setUserTrack(currentPosition ? [currentPosition] : []);
-    setTrackingDebug({
-      accuracy: null,
-      segmentDistance: null,
-      speedMps: null,
-      minTrackedSegmentMeters: null,
-      bufferDistance: null,
-      addedDistance: null,
-      gpsQuality: "fair",
-      source: null,
-      status: "standby",
-      statusReason: "Run started. Waiting for movement sample.",
-      sampleTime: null,
-    });
-    lastTrackedPositionRef.current = currentPosition;
-    lastAcceptedTimestampRef.current = Date.now();
-    lastRawPositionRef.current = currentPosition;
-    lastRawTimestampRef.current = Date.now();
-    pendingDistanceRef.current = 0;
-    pendingStartedAtRef.current = null;
-    pendingLastPointRef.current = null;
-    setPhase("running");
-    startTimers();
-    const startEvent = currentPosition
-      ? (isGhostMode ? "start_ghost" : "start_standard")
-      : "start_waiting";
-    const startLine = await generateLifecycleLine(coachVoiceAlias, startEvent);
-    announceCoach(startLine, "start");
+    if (isStartingRef.current || phase !== "idle") return;
+    isStartingRef.current = true;
+
+    try {
+      unlockAudioPlayback().catch(() => {});
+      stopSpeech();
+      resetCoachSession();
+      resetAiCoachSession();
+      stopTimers();
+      milestoneRef.current = { m500: false, m1k: false, m2k: false, t5: false, t10: false };
+      prevGapRef.current = 0;
+      gapBucketRef.current = null;
+      leadStateRef.current = "even";
+      setElapsed(0);
+      setDistance(0);
+      setDisplayDistance(0);
+      setWasBehind(false);
+      setResult(null);
+      setStandardResult(null);
+      setDistanceSeries([{ t: 0, d: 0 }]);
+      setUserTrack(currentPosition ? [currentPosition] : []);
+      setTrackingDebug({
+        accuracy: null,
+        segmentDistance: null,
+        speedMps: null,
+        minTrackedSegmentMeters: null,
+        bufferDistance: null,
+        addedDistance: null,
+        gpsQuality: "fair",
+        source: null,
+        status: "standby",
+        statusReason: "Run started. Waiting for movement sample.",
+        sampleTime: null,
+      });
+      lastTrackedPositionRef.current = currentPosition;
+      lastAcceptedTimestampRef.current = Date.now();
+      lastRawPositionRef.current = currentPosition;
+      lastRawTimestampRef.current = Date.now();
+      pendingDistanceRef.current = 0;
+      pendingStartedAtRef.current = null;
+      pendingLastPointRef.current = null;
+      setPhase("running");
+      startTimers();
+      const startEvent = currentPosition
+        ? (isGhostMode ? "start_ghost" : "start_standard")
+        : "start_waiting";
+      const startLine = await generateLifecycleLine(coachVoiceAlias, startEvent);
+      announceCoach(startLine, "start");
+    } finally {
+      isStartingRef.current = false;
+    }
   };
 
   const handlePause = async () => {
     unlockAudioPlayback().catch(() => {});
+    stopSpeech();
     stopTimers();
     setPhase("paused");
     const pauseLine = await generateLifecycleLine(coachVoiceAlias, "pause");
@@ -725,6 +735,7 @@ export function GhostRunTracking() {
 
   const handleResume = async () => {
     unlockAudioPlayback().catch(() => {});
+    stopSpeech();
     lastTrackedPositionRef.current = currentPosition;
     lastAcceptedTimestampRef.current = Date.now();
     lastRawPositionRef.current = currentPosition;
@@ -740,6 +751,7 @@ export function GhostRunTracking() {
 
   const finalizeRun = useCallback(() => {
     stopTimers();
+    stopSpeech();
     setPhase("done");
 
     const profile = getProfile();

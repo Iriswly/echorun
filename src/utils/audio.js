@@ -26,6 +26,7 @@ let audioContext = null;
 let currentAudio = null;
 let currentUtterance = null;
 let audioPlaybackUnlocked = false;
+let speechRequestToken = 0;
 const listeners = new Set();
 const intentionallyStoppedAudio = new Set();
 
@@ -133,6 +134,39 @@ export function clearAudioError() {
   notifyAudioStatus();
 }
 
+function beginSpeechRequest(interrupt = true) {
+  if (!interrupt) return null;
+  stopSpeech();
+  return speechRequestToken;
+}
+
+function isCurrentSpeechRequest(requestToken) {
+  return !requestToken || requestToken === speechRequestToken;
+}
+
+function shouldCancelSpeechRequest(requestToken) {
+  return !isCurrentSpeechRequest(requestToken) || !isAudioEnabled();
+}
+
+function stopAudioElement(audio) {
+  if (!audio) return;
+  audio._echorunStopped = true;
+  intentionallyStoppedAudio.add(audio);
+  try {
+    audio.pause();
+  } catch {
+    // Ignore pause failures while force-stopping playback.
+  }
+  try {
+    audio.removeAttribute("src");
+    audio.load();
+    audio.src = "";
+  } catch {
+    // Ignore browser-specific cleanup failures.
+  }
+  audio._echorunCleanup?.();
+}
+
 function createAudioCleanup(audio, cleanup) {
   let cleaned = false;
   return () => {
@@ -154,12 +188,13 @@ function createAudioCleanup(audio, cleanup) {
 }
 
 function stopNativeSpeech() {
-  if (!currentUtterance) return;
   const utterance = currentUtterance;
   currentUtterance = null;
-  utterance.onstart = null;
-  utterance.onend = null;
-  utterance.onerror = null;
+  if (utterance) {
+    utterance.onstart = null;
+    utterance.onend = null;
+    utterance.onerror = null;
+  }
   if (isNativeSpeechSupported()) {
     window.speechSynthesis.cancel();
   }
@@ -217,25 +252,11 @@ export async function unlockAudioPlayback() {
 
 function stopCurrentAudioElement() {
   if (!currentAudio) return;
-  const audio = currentAudio;
-  audio._echorunStopped = true;
-  intentionallyStoppedAudio.add(audio);
-  try {
-    audio.pause();
-  } catch {
-    // Ignore pause failures while force-stopping playback.
-  }
-  try {
-    audio.removeAttribute("src");
-    audio.load();
-    audio.src = "";
-  } catch {
-    // Ignore browser-specific cleanup failures.
-  }
-  audio._echorunCleanup?.();
+  stopAudioElement(currentAudio);
 }
 
 export function stopSpeech() {
+  speechRequestToken += 1;
   lastError = null;
   speaking = false;
   stopCurrentAudioElement();
@@ -272,7 +293,16 @@ async function requestDashScopeJson(path, payload) {
 }
 
 async function playAudioUrl(audioUrl, options = {}) {
-  const { onStart, onEnd, onError, cleanup } = options;
+  const { onStart, onEnd, onError, cleanup, requestToken } = options;
+  if (shouldCancelSpeechRequest(requestToken)) {
+    try {
+      cleanup?.();
+    } catch {
+      // Ignore cleanup failures for audio that was canceled before playback.
+    }
+    return false;
+  }
+
   const audio = new Audio(audioUrl);
   audio._echorunStopped = false;
   currentAudio = audio;
@@ -281,6 +311,11 @@ async function playAudioUrl(audioUrl, options = {}) {
   audio._echorunCleanup = cleanupAudio;
 
   audio.onplay = () => {
+    if (shouldCancelSpeechRequest(requestToken)) {
+      stopAudioElement(audio);
+      return;
+    }
+
     intentionallyStoppedAudio.delete(audio);
     speaking = true;
     lastError = null;
@@ -312,6 +347,10 @@ async function playAudioUrl(audioUrl, options = {}) {
 
   try {
     await audio.play();
+    if (shouldCancelSpeechRequest(requestToken)) {
+      stopAudioElement(audio);
+      return false;
+    }
     return true;
   } catch (error) {
     const intentional = isIntentionalAudioStop();
@@ -346,12 +385,15 @@ async function playAudioBytes(audioBytes, mimeType = "audio/mpeg", options = {})
 export async function playSynthesizedAudio(synthesis, options = {}) {
   const { interrupt = true, ...playOptions } = options;
   if (!synthesis) return false;
-  if (interrupt) stopSpeech();
+  const requestToken = beginSpeechRequest(interrupt);
   if (synthesis.audioUrl) {
-    return playAudioUrl(synthesis.audioUrl, playOptions);
+    return playAudioUrl(synthesis.audioUrl, { ...playOptions, requestToken });
   }
   if (synthesis.audioData) {
-    return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), playOptions);
+    return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
+      ...playOptions,
+      requestToken,
+    });
   }
   return false;
 }
@@ -531,13 +573,18 @@ export async function playCustomVoicePreview(previewAudioData, responseFormat = 
     playOptions.onEnd?.();
     return false;
   }
-  if (interrupt) stopSpeech();
-  return playAudioBytes(base64ToUint8Array(previewAudioData), inferMimeType(responseFormat), playOptions);
+  const requestToken = beginSpeechRequest(interrupt);
+  return playAudioBytes(base64ToUint8Array(previewAudioData), inferMimeType(responseFormat), {
+    ...playOptions,
+    requestToken,
+  });
 }
 
 function speakNativeMessage(text, options = {}) {
-  const { onStart, onEnd, onError } = options;
+  const { onStart, onEnd, onError, requestToken } = options;
   if (!isNativeSpeechSupported() || !String(text || "").trim()) return false;
+  if (shouldCancelSpeechRequest(requestToken)) return false;
+  stopNativeSpeech();
 
   const utterance = new window.SpeechSynthesisUtterance(String(text));
   currentUtterance = utterance;
@@ -546,6 +593,11 @@ function speakNativeMessage(text, options = {}) {
   utterance.volume = 1;
 
   utterance.onstart = () => {
+    if (shouldCancelSpeechRequest(requestToken)) {
+      stopNativeSpeech();
+      return;
+    }
+
     speaking = true;
     lastError = null;
     onStart?.();
@@ -572,6 +624,7 @@ function speakNativeMessage(text, options = {}) {
 }
 
 function fallbackToNativeSpeech(text, options = {}) {
+  if (shouldCancelSpeechRequest(options.requestToken)) return false;
   const played = speakNativeMessage(text, options);
   if (played) {
     lastError = null;
@@ -585,6 +638,7 @@ export async function speakMessage(text, options = {}) {
   const stored = readStoredCoachConfig();
   const shouldUseCustomDashScopeVoice =
     !!stored?.customVoiceName && (coachAlias === "CUSTOM" || (preferStoredCustomVoice && stored?.alias === "CUSTOM"));
+  let requestToken = null;
 
   if (!isAudioEnabled()) {
     onEnd?.();
@@ -599,10 +653,10 @@ export async function speakMessage(text, options = {}) {
   }
 
   try {
-    if (interrupt) stopSpeech();
+    requestToken = beginSpeechRequest(interrupt);
 
     if (!isDashScopeConfigured()) {
-      if (fallbackToNativeSpeech(text, { onStart, onEnd, onError })) {
+      if (fallbackToNativeSpeech(text, { onStart, onEnd, onError, requestToken })) {
         return true;
       }
       lastError = "DASHSCOPE_API_KEY is missing.";
@@ -617,9 +671,12 @@ export async function speakMessage(text, options = {}) {
         model: stored.customTtsModel,
       });
 
+      if (shouldCancelSpeechRequest(requestToken)) return false;
+
       if (synthesis.audioUrl) {
-        const played = await playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
-        return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
+        const played = await playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError, requestToken });
+        if (played || shouldCancelSpeechRequest(requestToken)) return played;
+        return fallbackToNativeSpeech(text, { onStart, onEnd, onError, requestToken });
       }
 
       if (synthesis.audioData) {
@@ -627,8 +684,10 @@ export async function speakMessage(text, options = {}) {
           onStart,
           onEnd,
           onError,
+          requestToken,
         });
-        return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
+        if (played || shouldCancelSpeechRequest(requestToken)) return played;
+        return fallbackToNativeSpeech(text, { onStart, onEnd, onError, requestToken });
       }
 
       throw new Error("DASHSCOPE_AUDIO_EMPTY");
@@ -637,9 +696,12 @@ export async function speakMessage(text, options = {}) {
     const voiceProfile = resolveVoiceProfile(coachAlias, options);
     const synthesis = await requestSpeechAudio(text, voiceProfile, options);
 
+    if (shouldCancelSpeechRequest(requestToken)) return false;
+
     if (synthesis.audioUrl) {
-      const played = await playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
-      return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
+      const played = await playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError, requestToken });
+      if (played || shouldCancelSpeechRequest(requestToken)) return played;
+      return fallbackToNativeSpeech(text, { onStart, onEnd, onError, requestToken });
     }
 
     if (synthesis.audioData) {
@@ -647,12 +709,20 @@ export async function speakMessage(text, options = {}) {
         onStart,
         onEnd,
         onError,
+        requestToken,
       });
-      return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
+      if (played || shouldCancelSpeechRequest(requestToken)) return played;
+      return fallbackToNativeSpeech(text, { onStart, onEnd, onError, requestToken });
     }
 
     throw new Error("DASHSCOPE_AUDIO_EMPTY");
   } catch (error) {
+    if (shouldCancelSpeechRequest(requestToken)) {
+      speaking = false;
+      notifyAudioStatus();
+      return false;
+    }
+
     speaking = false;
     const message = error instanceof Error ? error.message : "DASHSCOPE TTS failed.";
     const isExpectedInterrupt =
@@ -664,7 +734,7 @@ export async function speakMessage(text, options = {}) {
       notifyAudioStatus();
       return false;
     }
-    if (fallbackToNativeSpeech(text, { onStart, onEnd, onError })) {
+    if (fallbackToNativeSpeech(text, { onStart, onEnd, onError, requestToken })) {
       return true;
     }
     lastError = message;
