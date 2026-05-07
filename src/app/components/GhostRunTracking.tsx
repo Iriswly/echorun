@@ -39,6 +39,15 @@ const MIN_TRACKED_SEGMENT_METERS = 1.5;
 const MIN_RAW_SEGMENT_METERS = 0.75;
 const MAX_PENDING_BUFFER_AGE_MS = 8000;
 const LIVE_PACE_WINDOW_SECONDS = 10;
+const STARTUP_COACH_GUARD_MS = 8000;
+const MIN_COACH_ANNOUNCEMENT_MS = 3200;
+const MAX_COACH_ANNOUNCEMENT_MS = 8500;
+
+function estimateCoachAnnouncementMs(message: string) {
+  const words = String(message || "").trim().split(/\s+/).filter(Boolean).length;
+  const units = Math.max(words, Math.ceil(String(message || "").length / 8));
+  return Math.min(MAX_COACH_ANNOUNCEMENT_MS, Math.max(MIN_COACH_ANNOUNCEMENT_MS, 1200 + units * 360));
+}
 
 function ghostStatusText(gap: number): string {
   if (gap > 5) return "You're pulling away from the ghost.";
@@ -344,6 +353,10 @@ export function GhostRunTracking() {
   const pendingStartedAtRef = useRef<number | null>(null);
   const pendingLastPointRef = useRef<LngLatTuple | null>(null);
   const isStartingRef = useRef(false);
+  const coachAnnouncementIdRef = useRef(0);
+  const coachAnnouncementBusyRef = useRef(false);
+  const coachAnnouncementTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressCoachEventsUntilRef = useRef(0);
 
   const ghostDistance = isGhostMode && ghostRecord ? getDistanceAtTime(ghostRecord.distanceSeries || [], elapsed, ghostRecord.duration, ghostRecord.distance) : 0;
   const gap = distance - ghostDistance;
@@ -385,6 +398,10 @@ export function GhostRunTracking() {
     const unsubscribe = subscribeAudioStatus(setAudioStatus);
     return () => {
       unsubscribe();
+      if (coachAnnouncementTimerRef.current) {
+        clearTimeout(coachAnnouncementTimerRef.current);
+        coachAnnouncementTimerRef.current = null;
+      }
       stopSpeech();
       setActiveRunStatus({ isActive: false });
     };
@@ -395,12 +412,78 @@ export function GhostRunTracking() {
   }, [phase, elapsed]);
 
   const announceCoach = useCallback((message: string, soundEffect?: string) => {
-    setCoachMsg(message);
+    const canInterrupt = Boolean(soundEffect);
+    const isStartupAnnouncement = soundEffect === "start";
+    if (!canInterrupt && coachAnnouncementBusyRef.current) return;
+
+    const announcementId = coachAnnouncementIdRef.current + 1;
+    coachAnnouncementIdRef.current = announcementId;
+    coachAnnouncementBusyRef.current = true;
+    let hasShownMessage = false;
+
+    const releaseCurrentAnnouncement = () => {
+      if (coachAnnouncementIdRef.current !== announcementId) return;
+      coachAnnouncementBusyRef.current = false;
+      if (isStartupAnnouncement) {
+        suppressCoachEventsUntilRef.current = 0;
+      }
+      if (coachAnnouncementTimerRef.current) {
+        clearTimeout(coachAnnouncementTimerRef.current);
+        coachAnnouncementTimerRef.current = null;
+      }
+    };
+
+    const scheduleRelease = (durationMs = estimateCoachAnnouncementMs(message)) => {
+      if (coachAnnouncementTimerRef.current) {
+        clearTimeout(coachAnnouncementTimerRef.current);
+      }
+      coachAnnouncementTimerRef.current = setTimeout(releaseCurrentAnnouncement, durationMs);
+    };
+
+    const showCurrentMessage = () => {
+      if (coachAnnouncementIdRef.current !== announcementId) return;
+      hasShownMessage = true;
+      setCoachMsg(message);
+    };
+
     if (soundEffect) playSoundEffect(soundEffect);
-    speakMessage(message, { coachAlias: coachVoiceAlias });
+    const audioStatusNow = getAudioStatus();
+    if (!audioStatusNow.enabled || !audioStatusNow.supported) {
+      showCurrentMessage();
+      scheduleRelease();
+      return;
+    }
+
+    void speakMessage(message, {
+      coachAlias: coachVoiceAlias,
+      onStart: showCurrentMessage,
+      onEnd: releaseCurrentAnnouncement,
+      onError: () => {
+        showCurrentMessage();
+        scheduleRelease();
+      },
+    }).then((played) => {
+      if (coachAnnouncementIdRef.current !== announcementId) return;
+      if (played && !hasShownMessage) {
+        showCurrentMessage();
+      }
+      if (!played) {
+        showCurrentMessage();
+        scheduleRelease();
+        return;
+      }
+      scheduleRelease(MAX_COACH_ANNOUNCEMENT_MS);
+    }).catch(() => {
+      showCurrentMessage();
+      scheduleRelease();
+    });
   }, [coachVoiceAlias]);
 
   const triggerMsg = useCallback(async (event: Parameters<typeof generateCoachLine>[0]["event"]) => {
+    if (coachAnnouncementBusyRef.current) return;
+    if (getAudioStatus().speaking) return;
+    if (Date.now() < suppressCoachEventsUntilRef.current) return;
+
     const msg =
       await generateCoachLine({
         coachAlias: coachVoiceAlias,
@@ -413,7 +496,9 @@ export function GhostRunTracking() {
         ghostName: ghostRecord?.runnerName || ghostRecord?.title || "Ghost",
       }) ?? getCoachMessage(coachVoiceAlias, event);
 
-    if (msg) {
+    if (Date.now() < suppressCoachEventsUntilRef.current) return;
+    if (getAudioStatus().speaking) return;
+    if (msg && !coachAnnouncementBusyRef.current) {
       announceCoach(msg);
     }
   }, [announceCoach, coachVoiceAlias, distance, elapsed, gap, ghostRecord?.runnerName, ghostRecord?.title, isGhostMode, pace]);
@@ -673,10 +758,14 @@ export function GhostRunTracking() {
   const handleStart = async () => {
     if (isStartingRef.current || phase !== "idle") return;
     isStartingRef.current = true;
+    let announcedStart = false;
 
     try {
-      unlockAudioPlayback().catch(() => {});
+      await unlockAudioPlayback().catch(() => false);
       stopSpeech();
+      setCoachMsg(null);
+      coachAnnouncementBusyRef.current = true;
+      suppressCoachEventsUntilRef.current = Date.now() + STARTUP_COACH_GUARD_MS;
       resetCoachSession();
       resetAiCoachSession();
       stopTimers();
@@ -719,7 +808,12 @@ export function GhostRunTracking() {
         : "start_waiting";
       const startLine = await generateLifecycleLine(coachVoiceAlias, startEvent);
       announceCoach(startLine, "start");
+      announcedStart = true;
     } finally {
+      if (!announcedStart) {
+        coachAnnouncementBusyRef.current = false;
+        suppressCoachEventsUntilRef.current = 0;
+      }
       isStartingRef.current = false;
     }
   };
