@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type PointerEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Play, Pause, ChevronLeft, ChevronRight, Check, Trophy, Star, Volume2, VolumeX } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -79,6 +79,12 @@ const coaches = [
 const CUSTOM_CARD_ID = 999;
 const SAMPLE_CACHE_PREFIX = "ECHORUN_SAMPLE_PREVIEW";
 const SAMPLE_CACHE_VERSION = "coach-sample-v2";
+const SWIPE_TRIGGER_PX = 42;
+
+function isInteractiveCarouselTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement &&
+    Boolean(target.closest("button, input, textarea, select, a, [role='button']"));
+}
 
 function encodeCacheText(text: string) {
   return encodeURIComponent(text).slice(0, 180);
@@ -222,6 +228,16 @@ export function CoachSelection() {
   const [personaError, setPersonaError] = useState("");
   const [previewError, setPreviewError] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const swipeGestureRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    deltaX: 0,
+    deltaY: 0,
+    baseIndex: 0,
+    startedOnInteractive: false,
+  });
+  const ignoreNextCardClickRef = useRef(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -235,7 +251,9 @@ export function CoachSelection() {
 
   const scrollToCard = useCallback((index: number) => {
     if (!scrollRef.current) return;
-    const card = scrollRef.current.children[index] as HTMLElement | null;
+    const maxIndex = Math.max(0, scrollRef.current.children.length - 1);
+    const targetIndex = Math.min(Math.max(index, 0), maxIndex);
+    const card = scrollRef.current.children[targetIndex] as HTMLElement | null;
     if (!card) return;
 
     const containerWidth = scrollRef.current.clientWidth;
@@ -247,7 +265,14 @@ export function CoachSelection() {
     setIsScrollingProgrammatically(true);
     scrollRef.current.scrollTo({ left: Math.min(Math.max(0, targetLeft), maxScrollLeft), behavior: "smooth" });
     setTimeout(() => setIsScrollingProgrammatically(false), 600);
-    setSelectedIdx(index);
+    setSelectedIdx(targetIndex);
+  }, []);
+
+  const suppressNextCardClick = useCallback(() => {
+    ignoreNextCardClickRef.current = true;
+    window.setTimeout(() => {
+      ignoreNextCardClickRef.current = false;
+    }, 250);
   }, []);
 
   useEffect(() => {
@@ -297,6 +322,58 @@ export function CoachSelection() {
     });
 
     setSelectedIdx(closestIndex);
+  };
+
+  const handleCarouselPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    swipeGestureRef.current = {
+      active: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      deltaX: 0,
+      deltaY: 0,
+      baseIndex: selectedIdx,
+      startedOnInteractive: isInteractiveCarouselTarget(event.target),
+    };
+  };
+
+  const handleCarouselPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const gesture = swipeGestureRef.current;
+    if (!gesture.active || gesture.startedOnInteractive) return;
+
+    gesture.deltaX = event.clientX - gesture.startX;
+    gesture.deltaY = event.clientY - gesture.startY;
+
+    if (Math.abs(gesture.deltaX) > 10 && Math.abs(gesture.deltaX) > Math.abs(gesture.deltaY)) {
+      suppressNextCardClick();
+    }
+  };
+
+  const finishCarouselSwipe = () => {
+    const gesture = swipeGestureRef.current;
+    if (!gesture.active) return;
+
+    swipeGestureRef.current = {
+      active: false,
+      startX: 0,
+      startY: 0,
+      deltaX: 0,
+      deltaY: 0,
+      baseIndex: selectedIdx,
+      startedOnInteractive: false,
+    };
+
+    if (gesture.startedOnInteractive) return;
+
+    const horizontalSwipe = Math.abs(gesture.deltaX) >= SWIPE_TRIGGER_PX &&
+      Math.abs(gesture.deltaX) > Math.abs(gesture.deltaY) * 1.2;
+
+    if (!horizontalSwipe) return;
+
+    const direction = gesture.deltaX < 0 ? 1 : -1;
+    scrollToCard(gesture.baseIndex + direction);
+    suppressNextCardClick();
   };
 
   const buildCustomPreviewText = (request: string) => (
@@ -477,9 +554,15 @@ export function CoachSelection() {
           <div
             ref={scrollRef}
             onScroll={handleScroll}
+            onPointerDown={handleCarouselPointerDown}
+            onPointerMove={handleCarouselPointerMove}
+            onPointerUp={finishCarouselSwipe}
+            onPointerCancel={finishCarouselSwipe}
+            onPointerLeave={finishCarouselSwipe}
             className="flex gap-4 overflow-x-auto"
             style={{
               scrollSnapType: "x mandatory",
+              touchAction: "pan-y",
               scrollbarWidth: "none",
               msOverflowStyle: "none",
               paddingInline: "max(16px, calc((100% - min(280px, calc(100vw - 48px))) / 2))",
@@ -494,7 +577,11 @@ export function CoachSelection() {
               return (
                 <motion.div
                   key={coach.id}
-                  onClick={() => { setSelectedIdx(idx); scrollToCard(idx); }}
+                  onClick={() => {
+                    if (ignoreNextCardClickRef.current) return;
+                    setSelectedIdx(idx);
+                    scrollToCard(idx);
+                  }}
                   animate={{ scale: isActive ? 1 : 0.9, opacity: isActive ? 1 : 0.65 }}
                   transition={{ duration: 0.3 }}
                   className="relative flex-shrink-0 rounded-2xl overflow-hidden cursor-pointer"
