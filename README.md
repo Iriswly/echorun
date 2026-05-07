@@ -113,7 +113,7 @@ Run `npm run dev` to start the development server.
 
 This project uses the AMap JavaScript API on the `liverun` screen and stays fully frontend-only.
 
-Create a local env file such as `.env.local` in the project root and add:
+Copy `.env.example` to a local `.env.local` file in the project root and add your own demo keys:
 
 ```bash
 VITE_AMAP_API_KEY=your_amap_js_api_key
@@ -128,6 +128,17 @@ Notes:
 - `VITE_AMAP_SECURITY_JS_CODE` is recommended for current AMap web security checks.
 - `VITE_DASHSCOPE_API_KEY` enables AI-generated live coach lines through Alibaba Cloud Bailian's DashScope compatible API. If it is missing or the request fails, the app falls back to built-in scripted coach messages.
 - `VITE_DASHSCOPE_MODEL` is optional. The default is `qwen-plus`.
-- EchoRun now uses Bailian TTS for both default coach playback and custom voice generation. The default runtime TTS model is `cosyvoice-v3-flash`.
+- EchoRun now uses Bailian TTS for both default coach playback and custom voice generation. The default runtime TTS model is `cosyvoice-v3-plus`.
+- This is a front-end prototype. `.env.local` is only for local demos and should not be committed with real keys.
 - After editing env vars, restart `npm run dev`.
 - In the browser, allow location permission, otherwise live tracking cannot work.
+
+## Manual Test Checklist
+
+- Open the coach selection page and confirm it does not automatically request voice previews.
+- Click one default coach sample and confirm audio starts or a clear fallback/error appears.
+- Disable or break the DashScope key locally and confirm the preview button recovers after failure.
+- Quickly click multiple coach samples and confirm only one voice plays at a time.
+- Stop a playing sample and confirm another sample can play afterward.
+- Generate a custom voice and confirm its saved target model is used for later synthesis.
+- Keep real keys in `.env.local`; use `.env.example` for shareable configuration.

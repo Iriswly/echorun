@@ -7,7 +7,7 @@ import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
 import { getStorageKey } from "../../utils/auth.js";
 import { generateCustomCoachPersona, voiceStyleToCoachAlias } from "../../utils/aiCoach";
-import { designCustomVoice, getAudioStatus, playCustomVoicePreview, playSynthesizedAudio, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus, synthesizeCoachSpeech, unlockAudioPlayback } from "../../utils/audio.js";
+import { designCustomVoice, getAudioStatus, getCoachVoiceCacheSignature, playCustomVoicePreview, playSynthesizedAudio, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus, synthesizeCoachSpeech, unlockAudioPlayback } from "../../utils/audio.js";
 
 const coaches = [
   {
@@ -78,9 +78,15 @@ const coaches = [
 
 const CUSTOM_CARD_ID = 999;
 const SAMPLE_CACHE_PREFIX = "ECHORUN_SAMPLE_PREVIEW";
+const SAMPLE_CACHE_VERSION = "coach-sample-v2";
+
+function encodeCacheText(text: string) {
+  return encodeURIComponent(text).slice(0, 180);
+}
 
 function getSampleCacheKey(alias: string, text: string) {
-  return getStorageKey(`${SAMPLE_CACHE_PREFIX}:${alias}:${text}`);
+  const { model, voiceId } = getCoachVoiceCacheSignature(alias);
+  return getStorageKey(`${SAMPLE_CACHE_PREFIX}:${SAMPLE_CACHE_VERSION}:${model}:${voiceId}:${alias}:${encodeCacheText(text)}`);
 }
 
 function readSampleCache(alias: string, text: string) {
@@ -133,59 +139,69 @@ async function playCoachSample(
   setPlayingId: (id: number | null) => void,
   setPreviewError: (message: string) => void,
 ) {
-  await unlockAudioPlayback();
-  if (!getAudioStatus().enabled) {
-    setAudioEnabled(true);
-  }
+  let played = false;
 
-  const cached = readSampleCache(coach.alias, coach.sample);
-  if (cached?.audioData || cached?.audioUrl) {
-    const playedCached = await playSynthesizedAudio(cached, {
-      onStart: () => setPlayingId(coach.id),
-      onEnd: () => setPlayingId(null),
-      onError: () => setPlayingId(null),
-    });
-    if (playedCached) {
-      setPreviewError("");
-      return;
-    }
-  }
-
-  setPreviewError("Preparing sample preview...");
-  const synthesis = await synthesizeCoachSpeech(coach.sample, coach.alias);
-  if (synthesis.audioData || synthesis.audioUrl) {
-    writeSampleCache(coach.alias, coach.sample, {
-      audioData: synthesis.audioData || undefined,
-      audioUrl: synthesis.audioUrl || undefined,
-      responseFormat: synthesis.responseFormat || "mp3",
-    });
-    const playedSynth = await playSynthesizedAudio(synthesis, {
-      onStart: () => setPlayingId(coach.id),
-      onEnd: () => setPlayingId(null),
-      onError: () => setPlayingId(null),
-    });
-    if (playedSynth) {
-      setPreviewError("");
-      return;
-    }
-  }
-
-  const played = await speakMessage(coach.sample, {
-    coachAlias: coach.alias,
-    preferStoredCustomVoice: false,
+  const playbackCallbacks = {
     onStart: () => setPlayingId(coach.id),
     onEnd: () => setPlayingId(null),
     onError: () => setPlayingId(null),
-  });
+  };
 
-  if (played) {
-    setPreviewError("");
-    return;
+  try {
+    if (!getAudioStatus().enabled) {
+      setAudioEnabled(true);
+    }
+    void unlockAudioPlayback().catch(() => false);
+
+    const cached = readSampleCache(coach.alias, coach.sample);
+    if (cached?.audioData || cached?.audioUrl) {
+      played = await playSynthesizedAudio(cached, playbackCallbacks);
+      if (played) {
+        setPreviewError("");
+        return;
+      }
+    }
+
+    setPreviewError("Preparing sample preview...");
+
+    try {
+      const synthesis = await synthesizeCoachSpeech(coach.sample, coach.alias);
+      if (synthesis.audioData || synthesis.audioUrl) {
+        writeSampleCache(coach.alias, coach.sample, {
+          audioData: synthesis.audioData || undefined,
+          audioUrl: synthesis.audioUrl || undefined,
+          responseFormat: synthesis.responseFormat || "mp3",
+        });
+        played = await playSynthesizedAudio(synthesis, playbackCallbacks);
+        if (played) {
+          setPreviewError("");
+          return;
+        }
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? `Cloud preview failed. Trying fallback voice. ${error.message}` : "Cloud preview failed. Trying fallback voice.");
+    }
+
+    played = await speakMessage(coach.sample, {
+      coachAlias: coach.alias,
+      preferStoredCustomVoice: false,
+      ...playbackCallbacks,
+    });
+
+    if (played) {
+      setPreviewError("");
+      return;
+    }
+
+    setPreviewError(getAudioStatus().lastError || "Voice preview failed.");
+  } catch (error) {
+    setPreviewError(error instanceof Error ? error.message : "Voice preview failed.");
+  } finally {
+    if (!played) {
+      stopSpeech();
+      setPlayingId(null);
+    }
   }
-
-  stopSpeech();
-  setPlayingId(null);
-  setPreviewError(getAudioStatus().lastError || "Voice preview failed.");
 }
 
 export function CoachSelection() {
@@ -261,36 +277,6 @@ export function CoachSelection() {
       // Ignore malformed storage.
     }
   }, [scrollToCard]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const prefetchSamples = async () => {
-      for (const coach of coaches) {
-        if (cancelled) return;
-        if (readSampleCache(coach.alias, coach.sample)) continue;
-
-        try {
-          const synthesis = await synthesizeCoachSpeech(coach.sample, coach.alias);
-          if (cancelled) return;
-          if (synthesis.audioData || synthesis.audioUrl) {
-            writeSampleCache(coach.alias, coach.sample, {
-              audioData: synthesis.audioData || undefined,
-              audioUrl: synthesis.audioUrl || undefined,
-              responseFormat: synthesis.responseFormat || "mp3",
-            });
-          }
-        } catch {
-          // Leave uncached; click-time fallback will handle it.
-        }
-      }
-    };
-
-    void prefetchSamples();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleScroll = () => {
     if (!scrollRef.current || isScrollingProgrammatically) return;
@@ -431,11 +417,12 @@ export function CoachSelection() {
               ECHORUN
             </span>
             <button
-              onClick={async () => {
-                if (!audioStatus.enabled) {
-                  await unlockAudioPlayback();
+              onClick={() => {
+                const nextEnabled = !getAudioStatus().enabled;
+                setAudioEnabled(nextEnabled);
+                if (nextEnabled) {
+                  void unlockAudioPlayback().catch(() => false);
                 }
-                setAudioEnabled(!audioStatus.enabled);
               }}
               className="px-2 py-1 rounded-full flex items-center gap-1.5 active:scale-95"
               style={{ background: `${selectedCoach.color}18`, border: `1px solid ${selectedCoach.borderColor}`, fontSize: "9px", color: selectedCoach.color, fontWeight: 700, letterSpacing: "0.1em" }}
@@ -584,7 +571,11 @@ export function CoachSelection() {
                               setPlayingId(null);
                             } else {
                               setPreviewError("");
-                              playCoachSample(coach, setPlayingId, setPreviewError);
+                              void playCoachSample(coach, setPlayingId, setPreviewError).catch((error) => {
+                                stopSpeech();
+                                setPlayingId(null);
+                                setPreviewError(error instanceof Error ? error.message : "Voice preview failed.");
+                              });
                             }
                           }}
                           className="w-full flex items-center justify-center gap-2 py-3 rounded-xl transition-all active:scale-95"

@@ -846,11 +846,12 @@ export function GhostRunTracking() {
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
             <button
-              onClick={async () => {
-                if (!audioStatus.enabled) {
-                  await unlockAudioPlayback();
+              onClick={() => {
+                const nextEnabled = !getAudioStatus().enabled;
+                setAudioEnabled(nextEnabled);
+                if (nextEnabled) {
+                  void unlockAudioPlayback().catch(() => false);
                 }
-                setAudioEnabled(!audioStatus.enabled);
               }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full active:scale-95"
               style={{ background: audioStatus.enabled ? `${coachColor}12` : "#F3F4F6", border: `1px solid ${audioStatus.enabled ? `${coachColor}30` : "#E5E7EB"}` }}

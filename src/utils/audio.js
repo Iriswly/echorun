@@ -4,6 +4,7 @@ const AUDIO_ENABLED_KEY = "ECHORUN_AUDIO_ENABLED";
 const DASHSCOPE_DEFAULT_BASE_URL = import.meta.env.VITE_DASHSCOPE_API_BASE_URL?.trim() || "https://dashscope.aliyuncs.com/api/v1";
 const COSYVOICE_TTS_MODEL = "cosyvoice-v3-plus";
 const COSYVOICE_ENROLLMENT_MODEL = "voice-enrollment";
+const SILENT_AUDIO_DATA_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA==";
 
 export const COACH_VOICE_SETTINGS = {
   DREDD: { voice: "longanyang", rate: 1.06, pitch: 0.92, volume: 62 },
@@ -23,6 +24,7 @@ let lastError = null;
 let speaking = false;
 let audioContext = null;
 let currentAudio = null;
+let currentUtterance = null;
 let audioPlaybackUnlocked = false;
 const listeners = new Set();
 const intentionallyStoppedAudio = new Set();
@@ -42,8 +44,15 @@ function isDashScopeConfigured() {
   return !!getDashScopeConfig().apiKey;
 }
 
+function resolveTtsModel(options = {}) {
+  return String(options.model || options.targetModel || "").trim() || COSYVOICE_TTS_MODEL;
+}
+
 export function isSpeechSupported() {
-  return hasWindow() && typeof window.Audio !== "undefined" && typeof window.fetch !== "undefined";
+  return hasWindow() && (
+    (typeof window.Audio !== "undefined" && typeof window.fetch !== "undefined") ||
+    isNativeSpeechSupported()
+  );
 }
 
 export function isAudioEnabled() {
@@ -87,6 +96,12 @@ function notifyAudioStatus() {
   listeners.forEach((listener) => listener(status));
 }
 
+function isNativeSpeechSupported() {
+  return hasWindow() &&
+    typeof window.speechSynthesis !== "undefined" &&
+    typeof window.SpeechSynthesisUtterance !== "undefined";
+}
+
 export function subscribeAudioStatus(listener) {
   listeners.add(listener);
   listener(getAudioStatus());
@@ -96,6 +111,9 @@ export function subscribeAudioStatus(listener) {
 export function setAudioEnabled(enabled) {
   if (!hasWindow()) return;
   localStorage.setItem(getStorageKey(AUDIO_ENABLED_KEY), enabled ? "true" : "false");
+  if (enabled) {
+    lastError = null;
+  }
   if (!enabled) stopSpeech();
   notifyAudioStatus();
 }
@@ -113,6 +131,38 @@ export function getAudioStatus() {
 export function clearAudioError() {
   lastError = null;
   notifyAudioStatus();
+}
+
+function createAudioCleanup(audio, cleanup) {
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+
+    try {
+      cleanup?.();
+    } catch {
+      // Ignore cleanup failures; releasing playback state should continue.
+    }
+
+    audio.onplay = null;
+    audio.onended = null;
+    audio.onerror = null;
+    intentionallyStoppedAudio.delete(audio);
+    if (currentAudio === audio) currentAudio = null;
+  };
+}
+
+function stopNativeSpeech() {
+  if (!currentUtterance) return;
+  const utterance = currentUtterance;
+  currentUtterance = null;
+  utterance.onstart = null;
+  utterance.onend = null;
+  utterance.onerror = null;
+  if (isNativeSpeechSupported()) {
+    window.speechSynthesis.cancel();
+  }
 }
 
 export async function unlockAudioPlayback() {
@@ -133,20 +183,30 @@ export async function unlockAudioPlayback() {
   }
 
   if (typeof window.Audio !== "undefined") {
+    let probe = null;
     try {
-      const probe = new Audio();
+      probe = new Audio(SILENT_AUDIO_DATA_URI);
       probe.muted = true;
       probe.playsInline = true;
-      const maybePromise = probe.play();
-      if (maybePromise?.then) {
-        await maybePromise;
-      }
+      const playPromise = probe.play();
+      await Promise.race([
+        playPromise,
+        new Promise((resolve) => window.setTimeout(resolve, 500)),
+      ]);
       probe.pause();
       probe.removeAttribute("src");
       probe.load();
       unlocked = true;
     } catch {
       // Keep graceful fallback behavior if the browser still blocks autoplay.
+    } finally {
+      try {
+        probe?.pause();
+        probe?.removeAttribute("src");
+        probe?.load();
+      } catch {
+        // Ignore probe cleanup failures.
+      }
     }
   }
 
@@ -157,21 +217,29 @@ export async function unlockAudioPlayback() {
 
 function stopCurrentAudioElement() {
   if (!currentAudio) return;
-  intentionallyStoppedAudio.add(currentAudio);
-  currentAudio.onplay = null;
-  currentAudio.onended = null;
-  currentAudio.onerror = null;
-  currentAudio.pause();
-  currentAudio.removeAttribute("src");
-  currentAudio.load();
-  currentAudio.src = "";
-  currentAudio = null;
+  const audio = currentAudio;
+  audio._echorunStopped = true;
+  intentionallyStoppedAudio.add(audio);
+  try {
+    audio.pause();
+  } catch {
+    // Ignore pause failures while force-stopping playback.
+  }
+  try {
+    audio.removeAttribute("src");
+    audio.load();
+    audio.src = "";
+  } catch {
+    // Ignore browser-specific cleanup failures.
+  }
+  audio._echorunCleanup?.();
 }
 
 export function stopSpeech() {
   lastError = null;
   speaking = false;
   stopCurrentAudioElement();
+  stopNativeSpeech();
   notifyAudioStatus();
 }
 
@@ -206,8 +274,11 @@ async function requestDashScopeJson(path, payload) {
 async function playAudioUrl(audioUrl, options = {}) {
   const { onStart, onEnd, onError, cleanup } = options;
   const audio = new Audio(audioUrl);
+  audio._echorunStopped = false;
   currentAudio = audio;
-  const isIntentionalAudioStop = () => intentionallyStoppedAudio.has(audio);
+  const isIntentionalAudioStop = () => intentionallyStoppedAudio.has(audio) || audio._echorunStopped === true;
+  const cleanupAudio = createAudioCleanup(audio, cleanup);
+  audio._echorunCleanup = cleanupAudio;
 
   audio.onplay = () => {
     intentionallyStoppedAudio.delete(audio);
@@ -218,20 +289,16 @@ async function playAudioUrl(audioUrl, options = {}) {
   };
 
   audio.onended = () => {
-    intentionallyStoppedAudio.delete(audio);
     speaking = false;
-    cleanup?.();
-    if (currentAudio === audio) currentAudio = null;
+    cleanupAudio();
     onEnd?.();
     notifyAudioStatus();
   };
 
   audio.onerror = () => {
     const intentional = isIntentionalAudioStop();
-    intentionallyStoppedAudio.delete(audio);
     speaking = false;
-    cleanup?.();
-    if (currentAudio === audio) currentAudio = null;
+    cleanupAudio();
     if (intentional) {
       lastError = null;
       onEnd?.();
@@ -248,10 +315,8 @@ async function playAudioUrl(audioUrl, options = {}) {
     return true;
   } catch (error) {
     const intentional = isIntentionalAudioStop();
-    cleanup?.();
-    intentionallyStoppedAudio.delete(audio);
     speaking = false;
-    if (currentAudio === audio) currentAudio = null;
+    cleanupAudio();
     if (intentional) {
       lastError = null;
       onEnd?.();
@@ -279,12 +344,14 @@ async function playAudioBytes(audioBytes, mimeType = "audio/mpeg", options = {})
 }
 
 export async function playSynthesizedAudio(synthesis, options = {}) {
+  const { interrupt = true, ...playOptions } = options;
   if (!synthesis) return false;
+  if (interrupt) stopSpeech();
   if (synthesis.audioUrl) {
-    return playAudioUrl(synthesis.audioUrl, options);
+    return playAudioUrl(synthesis.audioUrl, playOptions);
   }
   if (synthesis.audioData) {
-    return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), options);
+    return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), playOptions);
   }
   return false;
 }
@@ -368,10 +435,18 @@ function resolveVoiceProfile(coachAlias, options = {}) {
   return COACH_VOICE_SETTINGS[coachAlias] ?? COACH_VOICE_SETTINGS.DREDD;
 }
 
-async function requestSpeechAudio(text, voiceProfile) {
+export function getCoachVoiceCacheSignature(coachAlias, options = {}) {
+  const voiceProfile = resolveVoiceProfile(coachAlias, options);
+  return {
+    model: resolveTtsModel(options),
+    voiceId: voiceProfile.voice || "default",
+  };
+}
+
+async function requestSpeechAudio(text, voiceProfile, options = {}) {
   const preparedText = prepareSpeechText(text, voiceProfile);
   const response = await requestDashScopeJson("/services/audio/tts/SpeechSynthesizer", {
-    model: COSYVOICE_TTS_MODEL,
+    model: resolveTtsModel(options),
     input: {
       text: preparedText,
       voice: voiceProfile.voice,
@@ -396,7 +471,7 @@ async function requestSpeechAudio(text, voiceProfile) {
 
 export async function synthesizeCoachSpeech(text, coachAlias, options = {}) {
   const voiceProfile = resolveVoiceProfile(coachAlias, options);
-  return requestSpeechAudio(text, voiceProfile);
+  return requestSpeechAudio(text, voiceProfile, options);
 }
 
 async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = COSYVOICE_TTS_MODEL }) {
@@ -438,7 +513,7 @@ async function requestDashScopeSynthesis(text, voiceName, options = {}) {
     pitch: options.pitch ?? profile.pitch,
     volume: options.volume ?? profile.volume,
     instruction: options.instruction ?? profile.instruction,
-  });
+  }, { model: options.model });
 }
 
 export async function designCustomVoice({ voicePrompt, preferredName, previewText, targetModel }) {
@@ -450,12 +525,59 @@ export async function synthesizeCustomVoice(text, voiceName, options = {}) {
 }
 
 export async function playCustomVoicePreview(previewAudioData, responseFormat = "wav", options = {}) {
+  const { interrupt = true, ...playOptions } = options;
   if (!previewAudioData) return false;
   if (!isAudioEnabled()) {
-    options.onEnd?.();
+    playOptions.onEnd?.();
     return false;
   }
-  return playAudioBytes(base64ToUint8Array(previewAudioData), inferMimeType(responseFormat), options);
+  if (interrupt) stopSpeech();
+  return playAudioBytes(base64ToUint8Array(previewAudioData), inferMimeType(responseFormat), playOptions);
+}
+
+function speakNativeMessage(text, options = {}) {
+  const { onStart, onEnd, onError } = options;
+  if (!isNativeSpeechSupported() || !String(text || "").trim()) return false;
+
+  const utterance = new window.SpeechSynthesisUtterance(String(text));
+  currentUtterance = utterance;
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+
+  utterance.onstart = () => {
+    speaking = true;
+    lastError = null;
+    onStart?.();
+    notifyAudioStatus();
+  };
+
+  utterance.onend = () => {
+    speaking = false;
+    if (currentUtterance === utterance) currentUtterance = null;
+    onEnd?.();
+    notifyAudioStatus();
+  };
+
+  utterance.onerror = (event) => {
+    speaking = false;
+    if (currentUtterance === utterance) currentUtterance = null;
+    lastError = event?.error ? `Browser speech failed: ${event.error}` : "Browser speech failed.";
+    onError?.(lastError);
+    notifyAudioStatus();
+  };
+
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+function fallbackToNativeSpeech(text, options = {}) {
+  const played = speakNativeMessage(text, options);
+  if (played) {
+    lastError = null;
+    notifyAudioStatus();
+  }
+  return played;
 }
 
 export async function speakMessage(text, options = {}) {
@@ -480,6 +602,9 @@ export async function speakMessage(text, options = {}) {
     if (interrupt) stopSpeech();
 
     if (!isDashScopeConfigured()) {
+      if (fallbackToNativeSpeech(text, { onStart, onEnd, onError })) {
+        return true;
+      }
       lastError = "DASHSCOPE_API_KEY is missing.";
       onError?.(lastError);
       notifyAudioStatus();
@@ -489,36 +614,41 @@ export async function speakMessage(text, options = {}) {
     if (shouldUseCustomDashScopeVoice) {
       const synthesis = await requestDashScopeSynthesis(text, stored.customVoiceName, {
         instruction: stored.customPersonaSummary,
+        model: stored.customTtsModel,
       });
 
       if (synthesis.audioUrl) {
-        return playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
+        const played = await playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
+        return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
       }
 
       if (synthesis.audioData) {
-        return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
+        const played = await playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
           onStart,
           onEnd,
           onError,
         });
+        return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
       }
 
       throw new Error("DASHSCOPE_AUDIO_EMPTY");
     }
 
     const voiceProfile = resolveVoiceProfile(coachAlias, options);
-    const synthesis = await requestSpeechAudio(text, voiceProfile);
+    const synthesis = await requestSpeechAudio(text, voiceProfile, options);
 
     if (synthesis.audioUrl) {
-      return playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
+      const played = await playAudioUrl(synthesis.audioUrl, { onStart, onEnd, onError });
+      return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
     }
 
     if (synthesis.audioData) {
-      return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
+      const played = await playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), {
         onStart,
         onEnd,
         onError,
       });
+      return played || fallbackToNativeSpeech(text, { onStart, onEnd, onError });
     }
 
     throw new Error("DASHSCOPE_AUDIO_EMPTY");
@@ -533,6 +663,9 @@ export async function speakMessage(text, options = {}) {
       onEnd?.();
       notifyAudioStatus();
       return false;
+    }
+    if (fallbackToNativeSpeech(text, { onStart, onEnd, onError })) {
+      return true;
     }
     lastError = message;
     onError?.(lastError);
