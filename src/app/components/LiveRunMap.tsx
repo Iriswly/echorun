@@ -17,7 +17,8 @@ type LiveRunMapProps = {
   deltaLabel: string;
   deltaColor: string;
   gapMeters?: number;
-  ghostProgress: number;
+  userDistance: number;
+  ghostDistance: number;
   ghostName?: string;
   currentPosition?: LngLatTuple | null;
   userTrack: LngLatTuple[];
@@ -140,23 +141,69 @@ function createGhostMarkerContent(name: string, status: "ahead" | "behind" | "ev
   `;
 }
 
-function getPointOnTrack(track: LngLatTuple[], progress: number): LngLatTuple | null {
-  if (track.length === 0) return null;
-  if (track.length === 1) return track[0];
+function calculateSegmentDistanceMeters(from: LngLatTuple, to: LngLatTuple) {
+  const earthRadius = 6371000;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const lat1 = toRadians(from[1]);
+  const lat2 = toRadians(to[1]);
+  const deltaLat = toRadians(to[1] - from[1]);
+  const deltaLng = toRadians(to[0] - from[0]);
 
-  const safeProgress = Math.min(Math.max(progress, 0), 1);
-  if (safeProgress <= 0) return track[0];
-  if (safeProgress >= 1) return track[track.length - 1];
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-  const segment = (track.length - 1) * safeProgress;
-  const startIndex = Math.floor(segment);
-  const t = segment - startIndex;
-  const start = track[startIndex];
-  const end = track[Math.min(startIndex + 1, track.length - 1)];
+  return earthRadius * c;
+}
+
+function getPointAtDistance(track: LngLatTuple[], targetDistance: number): LngLatTuple | null {
+  if (!track.length) return null;
+  if (track.length === 1 || targetDistance <= 0) return track[0];
+
+  let covered = 0;
+  for (let index = 1; index < track.length; index += 1) {
+    const start = track[index - 1];
+    const end = track[index];
+    const segmentDistance = calculateSegmentDistanceMeters(start, end);
+
+    if (covered + segmentDistance >= targetDistance) {
+      const span = segmentDistance || 1;
+      const t = (targetDistance - covered) / span;
+      return [
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+      ];
+    }
+
+    covered += segmentDistance;
+  }
+
+  return track[track.length - 1];
+}
+
+function extrapolateFromHeading(track: LngLatTuple[], distanceMeters: number): LngLatTuple | null {
+  if (!track.length) return null;
+  if (track.length === 1 || distanceMeters <= 0) return track[track.length - 1];
+
+  const last = track[track.length - 1];
+  let previous = track[track.length - 2];
+
+  for (let index = track.length - 2; index >= 0; index -= 1) {
+    if (track[index][0] !== last[0] || track[index][1] !== last[1]) {
+      previous = track[index];
+      break;
+    }
+  }
+
+  const segmentDistance = calculateSegmentDistanceMeters(previous, last) || 1;
+  const lngDelta = last[0] - previous[0];
+  const latDelta = last[1] - previous[1];
+  const scale = distanceMeters / segmentDistance;
 
   return [
-    start[0] + (end[0] - start[0]) * t,
-    start[1] + (end[1] - start[1]) * t,
+    last[0] + lngDelta * scale,
+    last[1] + latDelta * scale,
   ];
 }
 
@@ -196,7 +243,8 @@ export function LiveRunMap({
   deltaLabel,
   deltaColor,
   gapMeters = 0,
-  ghostProgress,
+  userDistance,
+  ghostDistance,
   ghostName = "Ghost",
   currentPosition = null,
   userTrack,
@@ -441,7 +489,6 @@ export function LiveRunMap({
       if (disposed) return false;
       const position = readAmapPosition(result);
       if (!position) return false;
-
       emitResolvedPosition(position.lng, position.lat, position.accuracy, message, true, Date.now(), "amap");
       return true;
     };
@@ -476,6 +523,7 @@ export function LiveRunMap({
         },
         (error) => {
           if (disposed) return;
+          browserWatchActive = false;
           const message =
             error.code === error.PERMISSION_DENIED
               ? "Location permission denied."
@@ -591,16 +639,20 @@ export function LiveRunMap({
       return;
     }
 
-    const ghostPoint = userTrack.length > 0 ? getPointOnTrack(userTrack, ghostProgress) : currentPosition;
+    const ghostPoint =
+      ghostDistance <= userDistance
+        ? getPointAtDistance(userTrack, ghostDistance) ?? currentPosition
+        : extrapolateFromHeading(userTrack.length > 0 ? userTrack : currentPosition ? [currentPosition] : [], ghostDistance - userDistance) ?? currentPosition;
     if (!ghostPoint) {
       ghostMarkerRef.current.hide();
       return;
     }
 
+    const ghostState = gapMeters > 1 ? "behind" : gapMeters < -1 ? "ahead" : "even";
     ghostMarkerRef.current.setPosition(ghostPoint);
-    ghostMarkerRef.current.setContent(createGhostMarkerContent(ghostName, gapMeters > 8 ? "behind" : gapMeters < -8 ? "ahead" : "even"));
+    ghostMarkerRef.current.setContent(createGhostMarkerContent(ghostName, ghostState));
     ghostMarkerRef.current.show();
-  }, [currentPosition, gapMeters, ghostName, ghostProgress, isGhostMode, userTrack]);
+  }, [currentPosition, ghostDistance, gapMeters, ghostName, isGhostMode, userDistance, userTrack]);
 
   if (!canUseAmap) {
     return (

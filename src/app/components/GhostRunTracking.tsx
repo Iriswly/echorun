@@ -9,7 +9,7 @@ import { saveRunRecord } from "../../utils/storage.js";
 import { getCoachMessage, resetCoachSession } from "../../utils/coachMessages.js";
 import { generateCoachLine, generateLifecycleLine, getGapBucket, getLeadState, resetAiCoachSession } from "../../utils/aiCoach";
 import { getStorageKey } from "../../utils/auth.js";
-import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
+import { getAudioStatus, playSoundEffect, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus, unlockAudioPlayback } from "../../utils/audio.js";
 import { RUN_STOP_REQUEST_EVENT, setActiveRunStatus } from "../../utils/runSession";
 import { LiveRunMap } from "./LiveRunMap";
 
@@ -307,6 +307,7 @@ export function GhostRunTracking() {
   const [phase, setPhase] = useState<"idle" | "running" | "paused" | "done">("idle");
   const [elapsed, setElapsed] = useState(0);
   const [distance, setDistance] = useState(0);
+  const [displayDistance, setDisplayDistance] = useState(0);
   const [wasBehinDuringRun, setWasBehind] = useState(false);
   const [coachMsg, setCoachMsg] = useState<string | null>(null);
   const [result, setResult] = useState<{ outcome: "win" | "lose" | "tie"; finalGap: number; pointsEarned: number; newBadges: string[] } | null>(null);
@@ -316,7 +317,7 @@ export function GhostRunTracking() {
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [distanceSeries, setDistanceSeries] = useState<DistancePoint[]>([{ t: 0, d: 0 }]);
   const [audioStatus, setAudioStatus] = useState(getAudioStatus());
-  const [trackingDebug, setTrackingDebug] = useState<TrackingDebugInfo>({
+  const [, setTrackingDebug] = useState<TrackingDebugInfo>({
     accuracy: null,
     segmentDistance: null,
     speedMps: null,
@@ -345,19 +346,39 @@ export function GhostRunTracking() {
 
   const ghostDistance = isGhostMode && ghostRecord ? getDistanceAtTime(ghostRecord.distanceSeries || [], elapsed, ghostRecord.duration, ghostRecord.distance) : 0;
   const gap = distance - ghostDistance;
-  const ghostProgress = distance > 0 ? Math.max(0, Math.min(ghostDistance / distance, 1)) : 0;
   const pace = getRollingPace(distanceSeries, elapsed, distance, LIVE_PACE_WINDOW_SECONDS);
   const avgPace = elapsed > 0 && distance > 0 ? elapsed / (distance / 1000) : 0;
 
   const fmtTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
   const fmtDist = (meters: number) => (meters >= 1000 ? `${(meters / 1000).toFixed(2)}km` : `${Math.round(meters)}m`);
   const fmtPace = (seconds: number) => (seconds > 0 ? `${Math.floor(seconds / 60)}'${String(Math.floor(seconds % 60)).padStart(2, "0")}"` : "--'--\"");
-  const fmtDebugMeters = (value: number | null) => (typeof value === "number" ? `${value.toFixed(value >= 10 ? 1 : 2)}m` : "--");
-  const fmtDebugSpeed = (value: number | null) => (typeof value === "number" ? `${value.toFixed(2)} m/s` : "--");
-  const fmtDebugAccuracy = (value: number | null) => (typeof value === "number" ? `${Math.round(value)}m` : "--");
-  const fmtDebugTime = (value: number | null) => (typeof value === "number" ? new Date(value).toLocaleTimeString("zh-CN", { hour12: false }) : "--:--:--");
-  const fmtDebugSource = (value: PositionSource | null) => (value ? value.toUpperCase() : "--");
-  const fmtGpsQuality = (value: GpsQuality) => value.toUpperCase();
+
+  useEffect(() => {
+    if (phase === "idle") {
+      setDisplayDistance(0);
+      return;
+    }
+
+    if (phase === "done") {
+      setDisplayDistance(distance);
+      return;
+    }
+
+    if (Math.abs(distance - displayDistance) < 0.2) {
+      if (displayDistance !== distance) {
+        setDisplayDistance(distance);
+      }
+      return;
+    }
+
+    const animation = window.setTimeout(() => {
+      const delta = distance - displayDistance;
+      const step = Math.min(Math.max(Math.abs(delta) * 0.22, 0.4), 2.4);
+      setDisplayDistance((value) => value + Math.sign(delta) * Math.min(Math.abs(delta), step));
+    }, 80);
+
+    return () => window.clearTimeout(animation);
+  }, [displayDistance, distance, phase]);
 
   useEffect(() => {
     const unsubscribe = subscribeAudioStatus(setAudioStatus);
@@ -575,18 +596,6 @@ export function GhostRunTracking() {
     lastRawPositionRef.current = point;
     lastRawTimestampRef.current = timestamp;
 
-    if (rawSegmentDistance < MIN_RAW_SEGMENT_METERS) {
-      updateTrackingDebug({
-        status: "buffering",
-        statusReason: `Buffering: raw movement below noise floor (${MIN_RAW_SEGMENT_METERS.toFixed(2)}m).`,
-        segmentDistance: rawSegmentDistance,
-        speedMps,
-        minTrackedSegmentMeters,
-        bufferDistance: pendingDistanceRef.current,
-      });
-      return;
-    }
-
     if (rawSegmentDistance > MAX_TRACKED_SEGMENT_METERS || speedMps > MAX_REASONABLE_RUNNING_SPEED_MPS) {
       pendingDistanceRef.current = 0;
       pendingStartedAtRef.current = null;
@@ -608,11 +617,23 @@ export function GhostRunTracking() {
       return;
     }
 
-    pendingDistanceRef.current += rawSegmentDistance;
     if (!pendingStartedAtRef.current) {
       pendingStartedAtRef.current = timestamp;
     }
     pendingLastPointRef.current = point;
+    pendingDistanceRef.current = calculateSegmentDistanceMeters(previousAcceptedPoint, point);
+
+    if (rawSegmentDistance < MIN_RAW_SEGMENT_METERS && pendingDistanceRef.current < minTrackedSegmentMeters && bufferAgeMs < MAX_PENDING_BUFFER_AGE_MS) {
+      updateTrackingDebug({
+        status: "buffering",
+        statusReason: `Buffering: raw movement below noise floor (${MIN_RAW_SEGMENT_METERS.toFixed(2)}m).`,
+        segmentDistance: rawSegmentDistance,
+        speedMps,
+        minTrackedSegmentMeters,
+        bufferDistance: pendingDistanceRef.current,
+      });
+      return;
+    }
 
     if (pendingDistanceRef.current < minTrackedSegmentMeters && bufferAgeMs < MAX_PENDING_BUFFER_AGE_MS) {
       updateTrackingDebug({
@@ -649,6 +670,7 @@ export function GhostRunTracking() {
   }, [phase]);
 
   const handleStart = async () => {
+    unlockAudioPlayback().catch(() => {});
     resetCoachSession();
     resetAiCoachSession();
     stopTimers();
@@ -658,6 +680,7 @@ export function GhostRunTracking() {
     leadStateRef.current = "even";
     setElapsed(0);
     setDistance(0);
+    setDisplayDistance(0);
     setWasBehind(false);
     setResult(null);
     setStandardResult(null);
@@ -693,6 +716,7 @@ export function GhostRunTracking() {
   };
 
   const handlePause = async () => {
+    unlockAudioPlayback().catch(() => {});
     stopTimers();
     setPhase("paused");
     const pauseLine = await generateLifecycleLine(coachVoiceAlias, "pause");
@@ -700,6 +724,7 @@ export function GhostRunTracking() {
   };
 
   const handleResume = async () => {
+    unlockAudioPlayback().catch(() => {});
     lastTrackedPositionRef.current = currentPosition;
     lastAcceptedTimestampRef.current = Date.now();
     lastRawPositionRef.current = currentPosition;
@@ -765,6 +790,7 @@ export function GhostRunTracking() {
   }, [avgPace, coachAlias, distance, distanceSeries, elapsed, ghostRecord?.id, ghostRecord?.runnerName, ghostRecord?.title, isGhostMode]);
 
   const handleStop = useCallback(() => {
+    unlockAudioPlayback().catch(() => {});
     finalizeRun();
   }, [finalizeRun]);
 
@@ -796,23 +822,13 @@ export function GhostRunTracking() {
 
   const deltaLabel = isGhostMode ? (gap === 0 ? "EVEN" : gap > 0 ? `+${Math.round(gap)}m` : `${Math.round(gap)}m`) : phase === "idle" ? "READY" : "LIVE";
   const deltaColor = isGhostMode ? (gap > 0 ? "#10B981" : gap < 0 ? "#F97316" : "#9CA3AF") : "#2563EB";
-  const canStart = !locationStatus || phase !== "idle";
-  const gpsQualityColor = {
-    excellent: "#16A34A",
-    good: "#22C55E",
-    fair: "#2563EB",
-    weak: "#F59E0B",
-    poor: "#DC2626",
-  }[trackingDebug.gpsQuality];
-  const trackingStatusBadge = {
-    standby: { label: "STANDBY", background: "#E2E8F0", color: "#475569" },
-    buffering: { label: "BUFFERING", background: "#DBEAFE", color: "#1D4ED8" },
-    accepted: { label: "ACCEPTED", background: "#DCFCE7", color: "#166534" },
-    rejected: { label: "REJECTED", background: "#FEF3C7", color: "#92400E" },
-  }[trackingDebug.status];
-
+  const isLocationBlocking =
+    !!locationStatus &&
+    locationStatus !== "Locating..." &&
+    locationStatus !== "GPS pending. You can start and wait for the lock.";
+  const canStart = phase !== "idle" || !isLocationBlocking;
   return (
-    <div className="relative flex flex-col h-full min-w-0 overflow-hidden" style={{ background: "#F7F8FA" }}>
+    <div className="relative flex h-full min-w-0 flex-col overflow-y-auto overflow-x-hidden" style={{ background: "#F7F8FA" }}>
       {phase === "done" && isGhostMode && result && (
         <ResultCard result={result.outcome} finalGap={result.finalGap} pointsEarned={result.pointsEarned} newBadges={result.newBadges} coachAlias={coachAlias} coachColor={coachColor} onSave={handleSave} />
       )}
@@ -830,7 +846,12 @@ export function GhostRunTracking() {
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
             <button
-              onClick={() => setAudioEnabled(!audioStatus.enabled)}
+              onClick={async () => {
+                if (!audioStatus.enabled) {
+                  await unlockAudioPlayback();
+                }
+                setAudioEnabled(!audioStatus.enabled);
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full active:scale-95"
               style={{ background: audioStatus.enabled ? `${coachColor}12` : "#F3F4F6", border: `1px solid ${audioStatus.enabled ? `${coachColor}30` : "#E5E7EB"}` }}
               aria-label={audioStatus.enabled ? "Mute voice coach" : "Enable voice coach"}
@@ -855,7 +876,8 @@ export function GhostRunTracking() {
           deltaLabel={deltaLabel}
           deltaColor={deltaColor}
           gapMeters={gap}
-          ghostProgress={ghostProgress}
+          userDistance={distance}
+          ghostDistance={ghostDistance}
           ghostName={ghostRecord?.runnerName || ghostRecord?.title || "Ghost"}
           currentPosition={currentPosition}
           userTrack={userTrack}
@@ -867,7 +889,7 @@ export function GhostRunTracking() {
       <div className="flex-shrink-0 px-3 sm:px-4 py-3 grid grid-cols-3 gap-2">
         {[
           { label: "TIME", value: fmtTime(elapsed) },
-          { label: "DIST", value: fmtDist(distance) },
+          { label: "DIST", value: fmtDist(displayDistance) },
           { label: "PACE", value: fmtPace(pace) },
         ].map(({ label, value }) => (
           <div key={label} className="min-w-0 rounded-xl p-2.5 sm:p-3 text-center" style={{ background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
@@ -877,54 +899,11 @@ export function GhostRunTracking() {
         ))}
       </div>
 
-      <div className="flex-shrink-0 mx-4 mb-2 px-3 py-3 rounded-xl" style={{ background: "#F8FAFC", border: "1px solid #CBD5E1" }}>
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <div style={{ fontSize: "10px", color: "#475569", fontWeight: 800, letterSpacing: "0.14em" }}>TRACKING DEBUG</div>
-          <div
-            className="px-2 py-0.5 rounded-full"
-            style={{
-              background: trackingStatusBadge.background,
-              color: trackingStatusBadge.color,
-              fontSize: "9px",
-              fontWeight: 800,
-              letterSpacing: "0.08em",
-            }}
-          >
-            {trackingStatusBadge.label}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="px-2 py-0.5 rounded-full" style={{ background: `${gpsQualityColor}18`, color: gpsQualityColor, fontSize: "9px", fontWeight: 800, letterSpacing: "0.08em" }}>
-            GPS {fmtGpsQuality(trackingDebug.gpsQuality)}
-          </div>
-          <div className="px-2 py-0.5 rounded-full" style={{ background: "#E2E8F0", color: "#475569", fontSize: "9px", fontWeight: 800, letterSpacing: "0.08em" }}>
-            SOURCE {fmtDebugSource(trackingDebug.source)}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-          {[
-            { label: "Accuracy", value: fmtDebugAccuracy(trackingDebug.accuracy) },
-            { label: "Segment", value: fmtDebugMeters(trackingDebug.segmentDistance) },
-            { label: "Min Segment", value: fmtDebugMeters(trackingDebug.minTrackedSegmentMeters) },
-            { label: "Buffered", value: fmtDebugMeters(trackingDebug.bufferDistance) },
-            { label: "Added", value: fmtDebugMeters(trackingDebug.addedDistance) },
-            { label: "Speed", value: fmtDebugSpeed(trackingDebug.speedMps) },
-            { label: "Sample Time", value: fmtDebugTime(trackingDebug.sampleTime) },
-            { label: "Run Phase", value: phase.toUpperCase() },
-          ].map(({ label, value }) => (
-            <div key={label} className="min-w-0">
-              <div style={{ fontSize: "9px", color: "#94A3B8", fontWeight: 700, letterSpacing: "0.08em", marginBottom: "2px" }}>{label}</div>
-              <div style={{ fontSize: "11px", color: "#0F172A", fontWeight: 700, lineHeight: 1.35, wordBreak: "break-word" }}>{value}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize: "9px", color: "#94A3B8", fontWeight: 700, letterSpacing: "0.08em", marginTop: "10px", marginBottom: "4px" }}>TRACKING STATUS</div>
-        <div style={{ fontSize: "11px", color: "#334155", lineHeight: 1.45 }}>{trackingDebug.statusReason}</div>
-      </div>
-
       {locationStatus && phase !== "done" && (
         <div className="flex-shrink-0 mx-4 mb-2 px-3 py-2 rounded-xl" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
-          <div style={{ fontSize: "11px", color: "#92400E", fontWeight: 600, lineHeight: 1.4 }}>{locationStatus}</div>
+          <div style={{ fontSize: "11px", color: "#92400E", fontWeight: 600, lineHeight: 1.4 }}>
+            {locationStatus === "Locating..." ? "GPS pending. You can start and wait for the lock." : locationStatus}
+          </div>
         </div>
       )}
 
@@ -934,23 +913,46 @@ export function GhostRunTracking() {
         </div>
       )}
 
-      {isGhostMode && phase === "running" && (
-        <div className="flex-shrink-0 mx-4 mb-2 px-3 py-2 rounded-xl" style={{ background: "#FFF7ED", border: "1px solid #FDBA74" }}>
-          <div style={{ fontSize: "11px", color: "#92400E", fontWeight: 600, lineHeight: 1.4 }}>{ghostStatusText(gap)}</div>
-        </div>
-      )}
-
       <AnimatePresence>
         {coachMsg && (
-          <motion.div key={coachMsg} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.3 }} className="flex-shrink-0 mx-4 mb-2 p-3 rounded-xl flex items-start gap-2.5" style={{ background: "#FFFFFF", border: `1px solid ${coachColor}30`, boxShadow: "0 2px 8px rgba(15,23,42,0.06)" }}>
-            <span style={{ fontSize: "16px", flexShrink: 0 }}>{coachEmoji}</span>
-            <div>
-              <div style={{ fontSize: "8px", color: coachColor, fontWeight: 700, letterSpacing: "0.12em", marginBottom: "2px" }}>{coachAlias}</div>
-              <div style={{ fontSize: "12px", color: "#374151", fontStyle: "italic", lineHeight: 1.45 }}>"{coachMsg}"</div>
+          <motion.div
+            key={coachMsg}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.3 }}
+            className="flex-shrink-0 mx-4 mb-2 flex items-end gap-2.5"
+          >
+            <div
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
+              style={{ background: `${coachColor}16`, border: `1px solid ${coachColor}30`, color: coachColor, boxShadow: "0 4px 12px rgba(15,23,42,0.08)" }}
+            >
+              <span style={{ fontSize: "16px", lineHeight: 1 }}>{coachEmoji}</span>
             </div>
-            <button onClick={() => setCoachMsg(null)} style={{ marginLeft: "auto", color: "#D1D5DB", fontSize: "14px", flexShrink: 0 }}>
-              x
-            </button>
+            <div className="relative min-w-0 max-w-[min(85vw,420px)]">
+              <div
+                className="absolute left-[-6px] bottom-3 h-3 w-3 rotate-45"
+                style={{ background: "#FFFFFF", borderLeft: `1px solid ${coachColor}30`, borderBottom: `1px solid ${coachColor}30` }}
+              />
+              <div
+                className="relative rounded-[20px] rounded-bl-md px-4 py-3"
+                style={{ background: "#FFFFFF", border: `1px solid ${coachColor}30`, boxShadow: "0 8px 20px rgba(15,23,42,0.08)" }}
+              >
+                <div className="mb-1 flex items-center gap-2">
+                  <div style={{ fontSize: "8px", color: coachColor, fontWeight: 700, letterSpacing: "0.14em" }}>{coachAlias}</div>
+                  <div style={{ fontSize: "8px", color: "#9CA3AF", fontWeight: 700, letterSpacing: "0.12em" }}>COACH</div>
+                </div>
+                <div style={{ fontSize: "12px", color: "#374151", fontStyle: "italic", lineHeight: 1.5 }}>"{coachMsg}"</div>
+                <button
+                  onClick={() => setCoachMsg(null)}
+                  className="absolute right-2 top-2 h-5 w-5 rounded-full"
+                  style={{ color: "#D1D5DB", fontSize: "11px", lineHeight: 1 }}
+                  aria-label="Dismiss coach message"
+                >
+                  x
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

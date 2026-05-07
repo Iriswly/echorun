@@ -2,14 +2,14 @@ import { getStorageKey } from "./auth.js";
 
 const AUDIO_ENABLED_KEY = "ECHORUN_AUDIO_ENABLED";
 const DASHSCOPE_DEFAULT_BASE_URL = import.meta.env.VITE_DASHSCOPE_API_BASE_URL?.trim() || "https://dashscope.aliyuncs.com/api/v1";
-const COSYVOICE_FLASH_MODEL = "cosyvoice-v3-flash";
+const COSYVOICE_TTS_MODEL = "cosyvoice-v3-plus";
 const COSYVOICE_ENROLLMENT_MODEL = "voice-enrollment";
 
 export const COACH_VOICE_SETTINGS = {
-  DREDD: { voice: "longlaotie_v3", rate: 1.06, pitch: 0.92, volume: 62 },
-  KIRA: { voice: "longyingling_v3", rate: 0.9, pitch: 1.06, volume: 54 },
-  TITAN: { voice: "longanlang_v3", rate: 1.14, pitch: 1.0, volume: 70 },
-  SPECTER: { voice: "longxiaoxia_v3", rate: 0.96, pitch: 0.96, volume: 56 },
+  DREDD: { voice: "longanyang", rate: 1.06, pitch: 0.92, volume: 62 },
+  KIRA: { voice: "longanhuan", rate: 0.9, pitch: 1.06, volume: 54 },
+  TITAN: { voice: "longanyang", rate: 1.14, pitch: 1.0, volume: 70 },
+  SPECTER: { voice: "longanhuan", rate: 0.96, pitch: 0.96, volume: 56 },
 };
 
 const CUSTOM_VOICE_STYLE_MAP = {
@@ -23,6 +23,7 @@ let lastError = null;
 let speaking = false;
 let audioContext = null;
 let currentAudio = null;
+let audioPlaybackUnlocked = false;
 const listeners = new Set();
 const intentionallyStoppedAudio = new Set();
 
@@ -105,6 +106,7 @@ export function getAudioStatus() {
     supported: isSpeechSupported(),
     speaking,
     lastError,
+    unlocked: audioPlaybackUnlocked,
   };
 }
 
@@ -113,9 +115,52 @@ export function clearAudioError() {
   notifyAudioStatus();
 }
 
+export async function unlockAudioPlayback() {
+  if (!hasWindow()) return false;
+
+  let unlocked = audioPlaybackUnlocked;
+  const context = getAudioContext();
+
+  if (context?.state === "suspended") {
+    try {
+      await context.resume();
+      unlocked = true;
+    } catch {
+      // Ignore resume failure and try the HTML audio path next.
+    }
+  } else if (context) {
+    unlocked = true;
+  }
+
+  if (typeof window.Audio !== "undefined") {
+    try {
+      const probe = new Audio();
+      probe.muted = true;
+      probe.playsInline = true;
+      const maybePromise = probe.play();
+      if (maybePromise?.then) {
+        await maybePromise;
+      }
+      probe.pause();
+      probe.removeAttribute("src");
+      probe.load();
+      unlocked = true;
+    } catch {
+      // Keep graceful fallback behavior if the browser still blocks autoplay.
+    }
+  }
+
+  audioPlaybackUnlocked = unlocked;
+  notifyAudioStatus();
+  return audioPlaybackUnlocked;
+}
+
 function stopCurrentAudioElement() {
   if (!currentAudio) return;
   intentionallyStoppedAudio.add(currentAudio);
+  currentAudio.onplay = null;
+  currentAudio.onended = null;
+  currentAudio.onerror = null;
   currentAudio.pause();
   currentAudio.removeAttribute("src");
   currentAudio.load();
@@ -213,7 +258,10 @@ async function playAudioUrl(audioUrl, options = {}) {
       notifyAudioStatus();
       return false;
     }
-    const message = error instanceof Error ? error.message : "Audio playback failed.";
+    const rawMessage = error instanceof Error ? error.message : "Audio playback failed.";
+    const message = /user gesture/i.test(rawMessage)
+      ? "Audio is blocked until you tap the page again."
+      : rawMessage;
     lastError = message;
     onError?.(lastError);
     notifyAudioStatus();
@@ -228,6 +276,17 @@ async function playAudioBytes(audioBytes, mimeType = "audio/mpeg", options = {})
     ...options,
     cleanup: () => URL.revokeObjectURL(audioUrl),
   });
+}
+
+export async function playSynthesizedAudio(synthesis, options = {}) {
+  if (!synthesis) return false;
+  if (synthesis.audioUrl) {
+    return playAudioUrl(synthesis.audioUrl, options);
+  }
+  if (synthesis.audioData) {
+    return playAudioBytes(base64ToUint8Array(synthesis.audioData), inferMimeType(synthesis.responseFormat), options);
+  }
+  return false;
 }
 
 function clamp(value, min, max) {
@@ -263,6 +322,7 @@ function inferLanguageHints(text) {
 
 function normalizeEnglishForTts(text) {
   return String(text || "")
+    .replace(/\b([A-Z]{2,8})\b/g, (match) => match.toLowerCase())
     .replace(/\/km\b/gi, " per kilometer")
     .replace(/\bkm\b/gi, " kilometers")
     .replace(/\bm\b/g, " meters")
@@ -311,7 +371,7 @@ function resolveVoiceProfile(coachAlias, options = {}) {
 async function requestSpeechAudio(text, voiceProfile) {
   const preparedText = prepareSpeechText(text, voiceProfile);
   const response = await requestDashScopeJson("/services/audio/tts/SpeechSynthesizer", {
-    model: COSYVOICE_FLASH_MODEL,
+    model: COSYVOICE_TTS_MODEL,
     input: {
       text: preparedText,
       voice: voiceProfile.voice,
@@ -334,7 +394,12 @@ async function requestSpeechAudio(text, voiceProfile) {
   };
 }
 
-async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = COSYVOICE_FLASH_MODEL }) {
+export async function synthesizeCoachSpeech(text, coachAlias, options = {}) {
+  const voiceProfile = resolveVoiceProfile(coachAlias, options);
+  return requestSpeechAudio(text, voiceProfile);
+}
+
+async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = COSYVOICE_TTS_MODEL }) {
   const resolvedPreviewText = previewText || inferPreviewText(voicePrompt);
   const response = await requestDashScopeJson("/services/audio/tts/customization", {
     model: COSYVOICE_ENROLLMENT_MODEL,
@@ -394,10 +459,10 @@ export async function playCustomVoicePreview(previewAudioData, responseFormat = 
 }
 
 export async function speakMessage(text, options = {}) {
-  const { coachAlias = "DREDD", interrupt = true, onStart, onEnd, onError } = options;
+  const { coachAlias = "DREDD", interrupt = true, onStart, onEnd, onError, preferStoredCustomVoice = true } = options;
   const stored = readStoredCoachConfig();
   const shouldUseCustomDashScopeVoice =
-    !!stored?.customVoiceName && (coachAlias === "CUSTOM" || stored?.alias === "CUSTOM");
+    !!stored?.customVoiceName && (coachAlias === "CUSTOM" || (preferStoredCustomVoice && stored?.alias === "CUSTOM"));
 
   if (!isAudioEnabled()) {
     onEnd?.();

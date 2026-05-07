@@ -7,7 +7,7 @@ import { getLevelInfo } from "../../utils/scoring.js";
 import { ALL_BADGES } from "../../utils/badges.js";
 import { getStorageKey } from "../../utils/auth.js";
 import { generateCustomCoachPersona, voiceStyleToCoachAlias } from "../../utils/aiCoach";
-import { designCustomVoice, getAudioStatus, playCustomVoicePreview, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus } from "../../utils/audio.js";
+import { designCustomVoice, getAudioStatus, playCustomVoicePreview, playSynthesizedAudio, setAudioEnabled, speakMessage, stopSpeech, subscribeAudioStatus, synthesizeCoachSpeech, unlockAudioPlayback } from "../../utils/audio.js";
 
 const coaches = [
   {
@@ -77,6 +77,30 @@ const coaches = [
 ];
 
 const CUSTOM_CARD_ID = 999;
+const SAMPLE_CACHE_PREFIX = "ECHORUN_SAMPLE_PREVIEW";
+
+function getSampleCacheKey(alias: string, text: string) {
+  return getStorageKey(`${SAMPLE_CACHE_PREFIX}:${alias}:${text}`);
+}
+
+function readSampleCache(alias: string, text: string) {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = localStorage.getItem(getSampleCacheKey(alias, text));
+    return value ? JSON.parse(value) as { audioData?: string; audioUrl?: string; responseFormat?: string } : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSampleCache(alias: string, text: string, payload: { audioData?: string; audioUrl?: string; responseFormat?: string }) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(getSampleCacheKey(alias, text), JSON.stringify(payload));
+  } catch {
+    // Ignore quota / storage failures.
+  }
+}
 
 function WaveformBars({ isPlaying, color }: { isPlaying: boolean; color: string }) {
   const [heights, setHeights] = useState([4, 8, 12, 7, 5, 10, 8, 4, 6, 9, 5, 7]);
@@ -106,20 +130,62 @@ function WaveformBars({ isPlaying, color }: { isPlaying: boolean; color: string 
 
 async function playCoachSample(
   coach: (typeof coaches)[number],
-  setPlayingId: (id: number | null) => void
+  setPlayingId: (id: number | null) => void,
+  setPreviewError: (message: string) => void,
 ) {
-  const audioStatus = getAudioStatus();
-  if (!audioStatus.supported) {
-    alert(audioStatus.lastError || "Voice preview is not supported in this browser.");
-    return;
+  await unlockAudioPlayback();
+  if (!getAudioStatus().enabled) {
+    setAudioEnabled(true);
   }
 
-  await speakMessage(coach.sample, {
+  const cached = readSampleCache(coach.alias, coach.sample);
+  if (cached?.audioData || cached?.audioUrl) {
+    const playedCached = await playSynthesizedAudio(cached, {
+      onStart: () => setPlayingId(coach.id),
+      onEnd: () => setPlayingId(null),
+      onError: () => setPlayingId(null),
+    });
+    if (playedCached) {
+      setPreviewError("");
+      return;
+    }
+  }
+
+  setPreviewError("Preparing sample preview...");
+  const synthesis = await synthesizeCoachSpeech(coach.sample, coach.alias);
+  if (synthesis.audioData || synthesis.audioUrl) {
+    writeSampleCache(coach.alias, coach.sample, {
+      audioData: synthesis.audioData || undefined,
+      audioUrl: synthesis.audioUrl || undefined,
+      responseFormat: synthesis.responseFormat || "mp3",
+    });
+    const playedSynth = await playSynthesizedAudio(synthesis, {
+      onStart: () => setPlayingId(coach.id),
+      onEnd: () => setPlayingId(null),
+      onError: () => setPlayingId(null),
+    });
+    if (playedSynth) {
+      setPreviewError("");
+      return;
+    }
+  }
+
+  const played = await speakMessage(coach.sample, {
     coachAlias: coach.alias,
+    preferStoredCustomVoice: false,
     onStart: () => setPlayingId(coach.id),
     onEnd: () => setPlayingId(null),
     onError: () => setPlayingId(null),
   });
+
+  if (played) {
+    setPreviewError("");
+    return;
+  }
+
+  stopSpeech();
+  setPlayingId(null);
+  setPreviewError(getAudioStatus().lastError || "Voice preview failed.");
 }
 
 export function CoachSelection() {
@@ -138,6 +204,7 @@ export function CoachSelection() {
   const [customTtsModel, setCustomTtsModel] = useState("");
   const [personaLoading, setPersonaLoading] = useState(false);
   const [personaError, setPersonaError] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -194,6 +261,36 @@ export function CoachSelection() {
       // Ignore malformed storage.
     }
   }, [scrollToCard]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const prefetchSamples = async () => {
+      for (const coach of coaches) {
+        if (cancelled) return;
+        if (readSampleCache(coach.alias, coach.sample)) continue;
+
+        try {
+          const synthesis = await synthesizeCoachSpeech(coach.sample, coach.alias);
+          if (cancelled) return;
+          if (synthesis.audioData || synthesis.audioUrl) {
+            writeSampleCache(coach.alias, coach.sample, {
+              audioData: synthesis.audioData || undefined,
+              audioUrl: synthesis.audioUrl || undefined,
+              responseFormat: synthesis.responseFormat || "mp3",
+            });
+          }
+        } catch {
+          // Leave uncached; click-time fallback will handle it.
+        }
+      }
+    };
+
+    void prefetchSamples();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleScroll = () => {
     if (!scrollRef.current || isScrollingProgrammatically) return;
@@ -284,7 +381,7 @@ export function CoachSelection() {
           voicePrompt: trimmed,
           preferredName: buildPreferredVoiceName(trimmed),
           previewText,
-          targetModel: "cosyvoice-v3-flash",
+          targetModel: "cosyvoice-v3-plus",
         }),
       ]);
 
@@ -297,7 +394,7 @@ export function CoachSelection() {
       setCustomVoiceStyle(generatedPersona.voiceStyle || "gentle");
       setCustomVoiceName(generatedVoice.voiceName);
       setCustomVoicePreviewText(generatedVoice.previewText || previewText);
-      setCustomTtsModel(generatedVoice.targetModel || "cosyvoice-v3-flash");
+      setCustomTtsModel(generatedVoice.targetModel || "cosyvoice-v3-plus");
 
       if (generatedVoice.previewAudioData) {
         stopSpeech();
@@ -334,7 +431,12 @@ export function CoachSelection() {
               ECHORUN
             </span>
             <button
-              onClick={() => setAudioEnabled(!audioStatus.enabled)}
+              onClick={async () => {
+                if (!audioStatus.enabled) {
+                  await unlockAudioPlayback();
+                }
+                setAudioEnabled(!audioStatus.enabled);
+              }}
               className="px-2 py-1 rounded-full flex items-center gap-1.5 active:scale-95"
               style={{ background: `${selectedCoach.color}18`, border: `1px solid ${selectedCoach.borderColor}`, fontSize: "9px", color: selectedCoach.color, fontWeight: 700, letterSpacing: "0.1em" }}
               aria-label={audioStatus.enabled ? "Mute voice coach" : "Enable voice coach"}
@@ -481,7 +583,8 @@ export function CoachSelection() {
                               stopSpeech();
                               setPlayingId(null);
                             } else {
-                              playCoachSample(coach, setPlayingId);
+                              setPreviewError("");
+                              playCoachSample(coach, setPlayingId, setPreviewError);
                             }
                           }}
                           className="w-full flex items-center justify-center gap-2 py-3 rounded-xl transition-all active:scale-95"
@@ -494,7 +597,12 @@ export function CoachSelection() {
                           <span style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em" }}>
                             {isPlaying ? "PLAYING..." : audioStatus.enabled ? "LISTEN TO SAMPLE" : "VOICE MUTED"}
                           </span>
-                        </button>
+                          </button>
+                        {previewError && (
+                          <div className="mt-2 px-3 py-2 rounded-xl" style={{ background: "#FEF2F2", border: "1px solid #FECACA", fontSize: "11px", color: "#B91C1C", fontWeight: 600, lineHeight: 1.4 }}>
+                            {previewError}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <>

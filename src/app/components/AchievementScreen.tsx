@@ -59,7 +59,7 @@ export function AchievementScreen() {
   const visibleRemaining = Math.max(0, ALL_BADGES.length - visibleCount);
 
   return (
-    <div className="relative flex h-full min-w-0 flex-col overflow-hidden" style={{ background: "#F7F8FA" }}>
+    <div className="relative flex h-full min-w-0 flex-col overflow-y-auto overflow-x-hidden" style={{ background: "#F7F8FA" }}>
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-6 sm:px-5">
         <div className="w-full rounded-[32px] p-5" style={{ background: "#FFFFFF", border: "1px solid #FDE68A", boxShadow: "0 10px 34px rgba(217,119,6,0.08)" }}>
           <div className="mb-3 flex items-center justify-center gap-2">
