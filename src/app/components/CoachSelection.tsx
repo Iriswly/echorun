@@ -56,7 +56,7 @@ const coaches = [
     borderColor: "#FDBA74",
     sample: "Every step is a battle. Win every single one.",
     avatar: "https://images.unsplash.com/photo-1555577773-ac8657852524?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=400",
-    emoji: "⚡",
+    emoji: "�?,
   },
   {
     id: 4,
@@ -293,7 +293,7 @@ export function CoachSelection() {
         setCustomVoiceStyle(stored.voiceStyle || "gentle");
         setCustomVoiceName(stored.customVoiceName || "");
         setCustomVoicePreviewText(stored.customVoicePreviewText || "");
-        setCustomTtsModel(stored.customTtsModel || "");
+        setCustomTtsModel(/^qwen3-tts-vd(?:-|$)/.test(String(stored.customTtsModel || "").trim()) ? stored.customTtsModel : "qwen3-tts-vd-2026-01-26");
       } else if (storedCoachIdx >= 0) {
         setSelectedIdx(storedCoachIdx);
         setTimeout(() => scrollToCard(storedCoachIdx), 100);
@@ -377,10 +377,8 @@ export function CoachSelection() {
   };
 
   const buildCustomPreviewText = (request: string) => (
-    /[\u4e00-\u9fff]/.test(request)
-      ? "这是你的专属教练声音。"
-      : "This is your custom coach voice."
-  );
+  String(request || "").trim()
+);
 
   const buildPreferredVoiceName = (request: string) => {
     const normalized = String(request || "")
@@ -440,12 +438,12 @@ export function CoachSelection() {
           baseStyle: customBaseCoach.style,
           userRequest: trimmed,
         }),
-        designCustomVoice({
-          voicePrompt: trimmed,
-          preferredName: buildPreferredVoiceName(trimmed),
-          previewText,
-          targetModel: "cosyvoice-v3-plus",
-        }),
+                designCustomVoice({
+                  voicePrompt: trimmed,
+                  preferredName: buildPreferredVoiceName(trimmed),
+                  previewText,
+                  targetModel: "qwen3-tts-vd-2026-01-26",
+                }),
       ]);
 
       if (!generatedVoice?.voiceName) {
@@ -457,7 +455,8 @@ export function CoachSelection() {
       setCustomVoiceStyle(generatedPersona.voiceStyle || "gentle");
       setCustomVoiceName(generatedVoice.voiceName);
       setCustomVoicePreviewText(generatedVoice.previewText || previewText);
-      setCustomTtsModel(generatedVoice.targetModel || "cosyvoice-v3-plus");
+      console.log("[EchoRun][VoiceDesign] generate applied", { voiceName: generatedVoice.voiceName, targetModel: generatedVoice.targetModel || "qwen3-tts-vd-2026-01-26", previewText: generatedVoice.previewText || previewText });
+            setCustomTtsModel(generatedVoice.targetModel || "qwen3-tts-vd-2026-01-26");
 
       if (generatedVoice.previewAudioData) {
         stopSpeech();
@@ -770,7 +769,7 @@ export function CoachSelection() {
         </div>
       </div>
 
-      {/* Sticky Confirm button — sits above bottom nav */}
+      {/* Sticky Confirm button �?sits above bottom nav */}
       <div
         className="relative z-20 flex-shrink-0 px-4 sm:px-6 py-3"
         style={{ background: "linear-gradient(to top, #F7F8FA 70%, transparent)", borderTop: "1px solid rgba(229,231,235,0.6)" }}
@@ -799,7 +798,7 @@ export function CoachSelection() {
                   return;
                 }
 
-                localStorage.setItem(getStorageKey("ECHORUN_COACH"), JSON.stringify(
+                const coachPayload =
                   isCustomSelected
                     ? {
                         alias: "CUSTOM",
@@ -823,8 +822,9 @@ export function CoachSelection() {
                         color: selectedCoach.color,
                         emoji: selectedCoach.emoji,
                         borderColor: selectedCoach.borderColor,
-                      },
-                ));
+                      };
+                console.log("[EchoRun][VoiceDesign] confirm payload", coachPayload);
+                localStorage.setItem(getStorageKey("ECHORUN_COACH"), JSON.stringify(coachPayload));
                 setConfirmed(true);
                 setTimeout(() => navigate("/run"), 800);
               }}
@@ -841,3 +841,10 @@ export function CoachSelection() {
     </div>
   );
 }
+
+
+
+
+
+
+

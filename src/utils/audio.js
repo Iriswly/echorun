@@ -3,7 +3,8 @@ import { getStorageKey } from "./auth.js";
 const AUDIO_ENABLED_KEY = "ECHORUN_AUDIO_ENABLED";
 const DASHSCOPE_DEFAULT_BASE_URL = import.meta.env.VITE_DASHSCOPE_API_BASE_URL?.trim() || "https://dashscope.aliyuncs.com/api/v1";
 const COSYVOICE_TTS_MODEL = "cosyvoice-v3-plus";
-const COSYVOICE_ENROLLMENT_MODEL = "voice-enrollment";
+const QWEN_VOICE_DESIGN_MODEL = "qwen-voice-design";
+const QWEN_VOICE_DESIGN_TTS_MODEL = "qwen3-tts-vd-2026-01-26";
 const SILENT_AUDIO_DATA_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA==";
 
 export const COACH_VOICE_SETTINGS = {
@@ -72,9 +73,10 @@ function base64ToUint8Array(base64) {
 
 function inferPreviewText(voicePrompt) {
   return /[\u4e00-\u9fff]/.test(String(voicePrompt || ""))
-    ? "è¿™æ˜¯ä½ çš„ä¸“å±žæ•™ç»ƒå£°éŸ³ã€‚"
+    ? "ÕâÊÇÄãµÄ×¨Êô½ÌÁ·ÉùÒôÔ¤ÀÀ¡£"
     : "This is your custom coach voice.";
 }
+
 
 function inferMimeType(format) {
   const value = String(format || "").toLowerCase();
@@ -429,6 +431,18 @@ function inferLanguageHints(text) {
   return ["en"];
 }
 
+function inferLanguageCode(text) {
+  return inferLanguageHints(text)[0] || "en";
+}
+
+function isQwenVoiceDesignTtsModel(model) {
+  return /^qwen3-tts-vd(?:-|$)/.test(String(model || "").trim());
+}
+
+function normalizeCustomTtsModel(model) {
+  return isQwenVoiceDesignTtsModel(model) ? String(model).trim() : QWEN_VOICE_DESIGN_TTS_MODEL;
+}
+
 function normalizeEnglishForTts(text) {
   return String(text || "")
     .replace(/\b([A-Z]{2,8})\b/g, (match) => match.toLowerCase())
@@ -486,9 +500,28 @@ export function getCoachVoiceCacheSignature(coachAlias, options = {}) {
 }
 
 async function requestSpeechAudio(text, voiceProfile, options = {}) {
+  const model = resolveTtsModel(options);
   const preparedText = prepareSpeechText(text, voiceProfile);
+  if (isQwenVoiceDesignTtsModel(model)) {
+    const response = await requestDashScopeJson("/services/aigc/multimodal-generation/generation", {
+      model,
+      input: {
+        text: preparedText,
+        voice: voiceProfile.voice,
+      },
+    });
+
+    const output = response?.output ?? {};
+    const audio = output.audio ?? {};
+    return {
+      audioUrl: audio.url || "",
+      audioData: audio.data || "",
+      responseFormat: audio.response_format || output.response_format || "wav",
+    };
+  }
+
   const response = await requestDashScopeJson("/services/audio/tts/SpeechSynthesizer", {
-    model: resolveTtsModel(options),
+    model,
     input: {
       text: preparedText,
       voice: voiceProfile.voice,
@@ -516,17 +549,17 @@ export async function synthesizeCoachSpeech(text, coachAlias, options = {}) {
   return requestSpeechAudio(text, voiceProfile, options);
 }
 
-async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = COSYVOICE_TTS_MODEL }) {
+async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, previewText, targetModel = QWEN_VOICE_DESIGN_TTS_MODEL }) {
   const resolvedPreviewText = previewText || inferPreviewText(voicePrompt);
   const response = await requestDashScopeJson("/services/audio/tts/customization", {
-    model: COSYVOICE_ENROLLMENT_MODEL,
+    model: QWEN_VOICE_DESIGN_MODEL,
     input: {
-      action: "create_voice",
+      action: "create",
       target_model: targetModel,
       voice_prompt: voicePrompt,
       preview_text: resolvedPreviewText,
-      prefix: normalizeVoicePrefix(preferredName || "echorun"),
-      language_hints: inferLanguageHints(resolvedPreviewText),
+      preferred_name: normalizeVoicePrefix(preferredName || "echorun"),
+      language: inferLanguageCode(resolvedPreviewText),
     },
     parameters: {
       sample_rate: 24000,
@@ -536,26 +569,43 @@ async function requestDashScopeVoiceDesign({ voicePrompt, preferredName, preview
 
   const output = response?.output ?? {};
   const previewAudio = output.preview_audio ?? {};
-  return {
-    voiceName: output.voice_id || "",
+  const result = {
+    voiceName: output.voice || "",
     targetModel: output.target_model || targetModel,
     previewText: resolvedPreviewText,
     previewAudioData: previewAudio.data || output.data || "",
     responseFormat: previewAudio.response_format || output.response_format || "wav",
     sampleRate: previewAudio.sample_rate || output.sample_rate || 24000,
   };
+  console.log("[EchoRun][VoiceDesign] generate success", { voiceName: result.voiceName, targetModel: result.targetModel, previewText: result.previewText, hasPreviewAudio: Boolean(result.previewAudioData) });
+  return result;
 }
 
 async function requestDashScopeSynthesis(text, voiceName, options = {}) {
   const profile = resolveVoiceProfile("CUSTOM", { voice: voiceName, instruction: options.instruction });
-  return requestSpeechAudio(text, {
+  const model = normalizeCustomTtsModel(options.model);
+  const preparedText = prepareSpeechText(text, {
     ...profile,
     voice: voiceName,
-    rate: options.rate ?? profile.rate,
-    pitch: options.pitch ?? profile.pitch,
-    volume: options.volume ?? profile.volume,
     instruction: options.instruction ?? profile.instruction,
-  }, { model: options.model });
+  });
+  console.log("[EchoRun][VoiceDesign] synthesis request", { model, voice: voiceName, text: preparedText });
+
+  const response = await requestDashScopeJson("/services/aigc/multimodal-generation/generation", {
+    model,
+    input: {
+      text: preparedText,
+      voice: voiceName,
+    },
+  });
+
+  const output = response?.output ?? {};
+  const audio = output.audio ?? {};
+  return {
+    audioUrl: audio.url || "",
+    audioData: audio.data || "",
+    responseFormat: audio.response_format || output.response_format || "wav",
+  };
 }
 
 export async function designCustomVoice({ voicePrompt, preferredName, previewText, targetModel }) {
@@ -666,9 +716,16 @@ export async function speakMessage(text, options = {}) {
     }
 
     if (shouldUseCustomDashScopeVoice) {
+      console.log("[EchoRun][VoiceDesign] speakMessage custom voice", {
+        storedCustomVoiceName: stored.customVoiceName,
+        storedCustomTtsModel: stored.customTtsModel,
+        normalizedModel: normalizeCustomTtsModel(stored.customTtsModel),
+        coachAlias,
+        text,
+      });
       const synthesis = await requestDashScopeSynthesis(text, stored.customVoiceName, {
         instruction: stored.customPersonaSummary,
-        model: stored.customTtsModel,
+        model: normalizeCustomTtsModel(stored.customTtsModel),
       });
 
       if (shouldCancelSpeechRequest(requestToken)) return false;
@@ -801,3 +858,13 @@ export function playSoundEffect(name) {
 
   (patterns[name] || []).forEach(playTone);
 }
+
+
+
+
+
+
+
+
+
+

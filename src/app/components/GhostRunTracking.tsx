@@ -310,6 +310,7 @@ export function GhostRunTracking() {
   })();
   const coachAlias: string = storedCoach.displayAlias || storedCoach.alias || "DREDD";
   const coachVoiceAlias: string = storedCoach.baseCoachAlias || storedCoach.alias || "DREDD";
+  const speechCoachAlias: string = storedCoach.alias === "CUSTOM" ? "CUSTOM" : coachVoiceAlias;
   const coachColor: string = storedCoach.color || "#EF4444";
   const coachEmoji: string = storedCoach.emoji || "C";
 
@@ -455,7 +456,7 @@ export function GhostRunTracking() {
     }
 
     void speakMessage(message, {
-      coachAlias: coachVoiceAlias,
+      coachAlias: speechCoachAlias,
       onStart: showCurrentMessage,
       onEnd: releaseCurrentAnnouncement,
       onError: () => {
@@ -863,7 +864,7 @@ export function GhostRunTracking() {
           : outcome === "lose"
             ? `Run complete. The ghost won this time. You earned ${pointsEarned} points.`
             : `Run complete. It was almost a tie. You earned ${pointsEarned} points.`,
-        { coachAlias: coachVoiceAlias },
+        { coachAlias: speechCoachAlias },
       );
       return { mode: "ghost" as const, pointsEarned, outcome, finalGap: gap };
     }
@@ -874,9 +875,9 @@ export function GhostRunTracking() {
     updateProfileAfterRun({ ...runResult, pointsEarned }, newBadges);
     setStandardResult({ pointsEarned, newBadges });
     playSoundEffect(newBadges.length > 0 ? "badge" : "finish");
-    speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias: coachVoiceAlias });
+    speakMessage(`Run complete. You earned ${pointsEarned} points.`, { coachAlias: speechCoachAlias });
     return { mode: "standard" as const, pointsEarned };
-  }, [avgPace, coachVoiceAlias, distance, elapsed, gap, isGhostMode, stopTimers, wasBehinDuringRun]);
+  }, [avgPace, coachVoiceAlias, distance, elapsed, gap, isGhostMode, speechCoachAlias, stopTimers, wasBehinDuringRun]);
 
   const persistRunRecord = useCallback((ghostResult?: { outcome: "win" | "lose" | "tie"; finalGap: number; pointsEarned: number } | null, standardPointsEarned?: number | null) => {
     saveRunRecord({
@@ -1103,3 +1104,6 @@ export function GhostRunTracking() {
     </div>
   );
 }
+
+
+
