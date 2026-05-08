@@ -7,6 +7,7 @@ import { PostRunDashboard } from "./components/PostRunDashboard";
 import { AchievementScreen } from "./components/AchievementScreen";
 import { AuthScreen } from "./components/AuthScreen";
 import { LandingScreen } from "./components/LandingScreen";
+import { OnboardingTour } from "./components/OnboardingTour";
 import { getCurrentUser } from "../utils/auth.js";
 import { pickRandomTheme } from "../utils/theme";
 import { getActiveRunStatus, RUN_STATUS_EVENT, RUN_STOP_REQUEST_EVENT } from "../utils/runSession";
@@ -223,6 +224,15 @@ function Root() {
                 return (
                   <button
                     key={tab.path}
+                    data-tour={
+                      tab.path === "/"
+                        ? "nav-coach"
+                        : tab.path === "/run"
+                          ? "nav-run"
+                          : tab.path === "/achievements"
+                            ? "nav-achievements"
+                            : "nav-dashboard"
+                    }
                     onClick={() => handleTabNavigate(tab.path)}
                     className="relative flex-1 min-w-0 flex flex-col items-center gap-1 py-3 transition-all duration-200 active:scale-95"
                     style={{
@@ -251,6 +261,8 @@ function Root() {
                 );
               })}
             </div>
+
+            <OnboardingTour disabled={Boolean(pendingPath) || hasActiveRun} />
           </>
         )}
       </div>

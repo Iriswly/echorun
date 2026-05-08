@@ -553,6 +553,7 @@ export function CoachSelection() {
         <div className="mt-2">
           <div
             ref={scrollRef}
+            data-tour="coach-carousel"
             onScroll={handleScroll}
             onPointerDown={handleCarouselPointerDown}
             onPointerMove={handleCarouselPointerMove}
@@ -791,6 +792,7 @@ export function CoachSelection() {
               <motion.button
               initial={{ opacity: 1 }}
               whileTap={{ scale: 0.97 }}
+              data-tour="confirm-coach"
               onClick={() => {
                 if (isCustomSelected && (!customPersonaPrompt.trim() || !customVoiceName.trim())) {
                   setPersonaError("Generate the custom voice card before confirming it.");
