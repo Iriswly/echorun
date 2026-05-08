@@ -360,7 +360,7 @@ export function CoachSelection() {
       startY: 0,
       deltaX: 0,
       deltaY: 0,
-      baseIndex: selectedIdx,
+      baseIndex: 0,
       startedOnInteractive: false,
     };
 

@@ -262,7 +262,7 @@ function Root() {
               })}
             </div>
 
-            <OnboardingTour disabled={Boolean(pendingPath) || hasActiveRun} />
+            <OnboardingTour theme={theme} disabled={Boolean(pendingPath) || hasActiveRun} />
           </>
         )}
       </div>

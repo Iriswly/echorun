@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { getStorageKey } from "../../utils/auth.js";
+import type { ThemePalette } from "../../utils/theme";
 
 type TourStep = {
   target: string;
@@ -93,7 +94,7 @@ function measureTarget(target: string): TargetBox | null {
   };
 }
 
-export function OnboardingTour({ disabled = false }: { disabled?: boolean }) {
+export function OnboardingTour({ disabled = false, theme }: { disabled?: boolean; theme: ThemePalette }) {
   const [isOpen, setIsOpen] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [targetBox, setTargetBox] = useState<TargetBox | null>(null);
@@ -176,8 +177,8 @@ export function OnboardingTour({ disabled = false }: { disabled?: boolean }) {
               left: targetBox.left - 6,
               width: targetBox.width + 12,
               height: targetBox.height + 12,
-              border: "2px solid #38BDF8",
-              boxShadow: "0 0 0 999px rgba(15,23,42,0.18), 0 12px 32px rgba(14,165,233,0.28)",
+              border: `2px solid ${theme.color}`,
+              boxShadow: `0 0 0 999px rgba(15,23,42,0.18), 0 12px 32px ${theme.glowColor}`,
             }}
           />
         )}
@@ -192,13 +193,13 @@ export function OnboardingTour({ disabled = false }: { disabled?: boolean }) {
           style={{
             ...cardPosition,
             background: "#FFFFFF",
-            border: "1px solid #BFDBFE",
+            border: `1px solid ${theme.borderColor}`,
             boxShadow: "0 18px 48px rgba(15,23,42,0.22)",
           }}
         >
           <div className="mb-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div style={{ fontSize: "10px", color: "#2563EB", fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase" }}>
+              <div style={{ fontSize: "10px", color: theme.color, fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase" }}>
                 {step.eyebrow} guide
               </div>
               <h2 style={{ marginTop: "3px", fontSize: "18px", lineHeight: 1.15, color: "#111827", fontWeight: 900, fontFamily: "'Archivo Black', sans-serif" }}>
@@ -208,10 +209,10 @@ export function OnboardingTour({ disabled = false }: { disabled?: boolean }) {
             <button
               onClick={closeTour}
               className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full active:scale-95"
-              style={{ background: "#F8FAFC", border: "1px solid #E5E7EB" }}
+              style={{ background: theme.glowColor, border: `1px solid ${theme.borderColor}` }}
               aria-label="Skip first use guide"
             >
-              <X size={14} color="#64748B" />
+              <X size={14} color={theme.secondaryColor} />
             </button>
           </div>
 
@@ -228,7 +229,7 @@ export function OnboardingTour({ disabled = false }: { disabled?: boolean }) {
                   style={{
                     width: index === stepIndex ? "18px" : "6px",
                     height: "6px",
-                    background: index === stepIndex ? "#2563EB" : "#CBD5E1",
+                    background: index === stepIndex ? theme.color : "#CBD5E1",
                     transition: "all 180ms ease",
                   }}
                 />
@@ -243,15 +244,15 @@ export function OnboardingTour({ disabled = false }: { disabled?: boolean }) {
                 onClick={goBack}
                 disabled={stepIndex === 0}
                 className="flex h-9 w-9 items-center justify-center rounded-full active:scale-95 disabled:opacity-40"
-                style={{ background: "#F8FAFC", border: "1px solid #E5E7EB" }}
+                style={{ background: "#F8FAFC", border: `1px solid ${theme.borderColor}` }}
                 aria-label="Previous guide note"
               >
-                <ChevronLeft size={15} color="#334155" />
+                <ChevronLeft size={15} color={theme.secondaryColor} />
               </button>
               <button
                 onClick={goNext}
                 className="flex h-9 items-center justify-center gap-1.5 rounded-full px-3 active:scale-95"
-                style={{ background: "#2563EB", border: "1px solid #1D4ED8", color: "#FFFFFF" }}
+                style={{ background: theme.color, border: `1px solid ${theme.secondaryColor}`, color: "#FFFFFF", boxShadow: `0 6px 16px ${theme.glowColor}` }}
               >
                 {stepIndex === TOUR_STEPS.length - 1 ? <Check size={15} /> : <ChevronRight size={15} />}
                 <span style={{ fontSize: "11px", fontWeight: 900, letterSpacing: "0.08em" }}>
